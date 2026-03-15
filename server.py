@@ -18,13 +18,17 @@ from dataclasses import dataclass
 from mcp.server.fastmcp import Context, FastMCP
 
 from analytics import (
+    compute_business_digest,
     compute_churn_analysis,
+    compute_churn_risk,
     compute_customer_ltv,
+    compute_merchant_health,
     compute_mrr_movement,
     compute_payout_summary,
     compute_plan_performance,
     compute_retention_cohorts,
     compute_revenue_summary,
+    compute_trial_funnel,
     find_revenue_anomalies,
     parse_period,
     previous_period,
@@ -799,6 +803,167 @@ async def get_app_comparison(
             {"comparison": comparison, "period": f"{start} to {end}"},
             indent=2,
         )
+    except ShopifyPartnerError as e:
+        return _error(str(e))
+
+
+# =============================================================================
+# Enhanced Analytics Tools — Sprint 2 (4)
+# =============================================================================
+
+
+@mcp.tool()
+async def get_trial_funnel(
+    app_id: str,
+    ctx: Context,
+    period: str = "90d",
+) -> str:
+    """Get trial-to-paid conversion funnel.
+
+    Args:
+        app_id: App GID or numeric ID (required).
+        period: '7d', '30d', '90d', '1y', or 'YYYY-MM-DD:YYYY-MM-DD'.
+
+    Tracks: install → first charge timing, conversion rate, average days
+    to convert, and merchants who installed but never paid.
+    """
+    try:
+        sp = _get_sp(ctx)
+        start, end = parse_period(period)
+
+        events = await sp.get_app_events(app_id, limit=500)
+        result = compute_trial_funnel(events, start, end)
+        return json.dumps(result, indent=2)
+    except ShopifyPartnerError as e:
+        return _error(str(e))
+
+
+@mcp.tool()
+async def get_churn_risk(
+    app_id: str,
+    ctx: Context,
+) -> str:
+    """Score active merchants by churn risk (low/medium/high).
+
+    Args:
+        app_id: App GID or numeric ID (required).
+
+    Heuristic signals: deactivation events, subscription cancellations,
+    reinstall patterns, declining charges, long inactivity.
+    Scored 0-100 → low (<20), medium (20-39), high (40+).
+    """
+    try:
+        sp = _get_sp(ctx)
+
+        events = await sp.get_app_events(app_id, limit=500)
+        txns = await sp.get_transactions(app_id=app_id, limit=1000)
+
+        results = compute_churn_risk(events, txns)
+
+        high = [r for r in results if r["risk_level"] == "high"]
+        medium = [r for r in results if r["risk_level"] == "medium"]
+        low = [r for r in results if r["risk_level"] == "low"]
+
+        return json.dumps(
+            {
+                "summary": {
+                    "total_active": len(results),
+                    "high_risk": len(high),
+                    "medium_risk": len(medium),
+                    "low_risk": len(low),
+                },
+                "high_risk_merchants": high,
+                "medium_risk_merchants": medium,
+                "low_risk_merchants": low[:5],
+            },
+            indent=2,
+        )
+    except ShopifyPartnerError as e:
+        return _error(str(e))
+
+
+@mcp.tool()
+async def get_merchant_health(
+    app_id: str,
+    ctx: Context,
+) -> str:
+    """Score merchants with a composite health grade (A-F).
+
+    Args:
+        app_id: App GID or numeric ID (required).
+
+    Grades based on 4 dimensions (0-25 each, total 0-100):
+    - Tenure: how long installed
+    - Revenue: total and recent charges
+    - Stability: no deactivations/reinstalls
+    - Engagement: recent activity
+
+    A (85+), B (70-84), C (55-69), D (40-54), F (<40).
+    """
+    try:
+        sp = _get_sp(ctx)
+
+        events = await sp.get_app_events(app_id, limit=500)
+        txns = await sp.get_transactions(app_id=app_id, limit=1000)
+
+        results = compute_merchant_health(events, txns)
+
+        grade_counts: dict[str, int] = {"A": 0, "B": 0, "C": 0, "D": 0, "F": 0}
+        for m in results:
+            grade_counts[m["grade"]] = grade_counts.get(m["grade"], 0) + 1
+
+        avg_score = (
+            round(sum(m["score"] for m in results) / len(results), 1)
+            if results
+            else 0.0
+        )
+
+        return json.dumps(
+            {
+                "summary": {
+                    "total_merchants": len(results),
+                    "average_score": avg_score,
+                    "grade_distribution": grade_counts,
+                },
+                "merchants": results,
+            },
+            indent=2,
+        )
+    except ShopifyPartnerError as e:
+        return _error(str(e))
+
+
+@mcp.tool()
+async def get_business_digest(
+    app_id: str,
+    ctx: Context,
+    period: str = "7d",
+) -> str:
+    """Get a business digest with key metrics and highlights.
+
+    Args:
+        app_id: App GID or numeric ID (required).
+        period: '7d' (weekly), '30d' (monthly), or custom range.
+
+    Summary of installs, uninstalls, revenue, plus comparison to
+    previous period. Highlights notable changes. Perfect for daily
+    or weekly check-ins.
+    """
+    try:
+        sp = _get_sp(ctx)
+        start, end = parse_period(period)
+        prev_start, _ = previous_period(start, end)
+
+        events = await sp.get_app_events(app_id, limit=500)
+        txns = await sp.get_transactions(
+            app_id=app_id,
+            created_at_min=f"{prev_start}T00:00:00Z",
+            created_at_max=f"{end}T23:59:59Z",
+            limit=1000,
+        )
+
+        result = compute_business_digest(events, txns, start, end)
+        return json.dumps(result, indent=2)
     except ShopifyPartnerError as e:
         return _error(str(e))
 

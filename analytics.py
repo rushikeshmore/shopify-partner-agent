@@ -722,3 +722,539 @@ def find_revenue_anomalies(
                 })
 
     return anomalies
+
+
+# =============================================================================
+# Enhanced Analytics (Sprint 2)
+# =============================================================================
+
+
+def compute_trial_funnel(
+    events: list[dict],
+    period_start: date,
+    period_end: date,
+) -> dict:
+    """Compute trial-to-paid conversion funnel.
+
+    Tracks: Install → First charge timing, conversion rate, average days
+    to convert, and drop-off analysis (installed but never paid).
+    """
+    installs = _filter_by_date(
+        [e for e in events if e.get("type") == "RELATIONSHIP_INSTALLED"],
+        period_start,
+        period_end,
+        date_field="occurredAt",
+    )
+    charges = [
+        e for e in events
+        if e.get("type") in (
+            "SUBSCRIPTION_CHARGE_ACCEPTED",
+            "SUBSCRIPTION_CHARGE_ACTIVATED",
+        )
+    ]
+
+    # Build install → first charge mapping
+    install_map: dict[str, date] = {}
+    for e in installs:
+        shop = e.get("shop", {}).get("myshopifyDomain", "")
+        if not shop:
+            continue
+        try:
+            install_date = datetime.fromisoformat(
+                e.get("occurredAt", "").replace("Z", "+00:00")
+            ).date()
+            if shop not in install_map or install_date < install_map[shop]:
+                install_map[shop] = install_date
+        except ValueError:
+            continue
+
+    # Find first charge per merchant
+    charge_map: dict[str, date] = {}
+    for e in charges:
+        shop = e.get("shop", {}).get("myshopifyDomain", "")
+        if not shop:
+            continue
+        try:
+            charge_date = datetime.fromisoformat(
+                e.get("occurredAt", "").replace("Z", "+00:00")
+            ).date()
+            if shop not in charge_map or charge_date < charge_map[shop]:
+                charge_map[shop] = charge_date
+        except ValueError:
+            continue
+
+    # Calculate conversion metrics
+    total_installs = len(install_map)
+    converted = []
+    not_converted = []
+    days_to_convert: list[int] = []
+
+    for shop, install_date in install_map.items():
+        if shop in charge_map:
+            days = (charge_map[shop] - install_date).days
+            if days >= 0:
+                converted.append({
+                    "shop": shop,
+                    "installed": install_date.isoformat(),
+                    "first_charge": charge_map[shop].isoformat(),
+                    "days_to_convert": days,
+                })
+                days_to_convert.append(days)
+        else:
+            days_since_install = (date.today() - install_date).days
+            not_converted.append({
+                "shop": shop,
+                "installed": install_date.isoformat(),
+                "days_since_install": days_since_install,
+            })
+
+    conversion_rate = (
+        round(len(converted) / total_installs * 100, 1)
+        if total_installs > 0
+        else 0.0
+    )
+    avg_days = round(mean(days_to_convert), 1) if days_to_convert else 0.0
+    median_days = (
+        sorted(days_to_convert)[len(days_to_convert) // 2]
+        if days_to_convert
+        else 0
+    )
+
+    return {
+        "funnel": {
+            "total_installs": total_installs,
+            "converted": len(converted),
+            "not_converted": len(not_converted),
+            "conversion_rate_pct": conversion_rate,
+        },
+        "timing": {
+            "avg_days_to_convert": avg_days,
+            "median_days_to_convert": median_days,
+            "fastest_conversion_days": min(days_to_convert) if days_to_convert else 0,
+            "slowest_conversion_days": max(days_to_convert) if days_to_convert else 0,
+        },
+        "converted_merchants": sorted(
+            converted, key=lambda x: x["days_to_convert"]
+        )[:10],
+        "unconverted_merchants": sorted(
+            not_converted, key=lambda x: x["days_since_install"], reverse=True
+        )[:10],
+        "period": f"{period_start} to {period_end}",
+    }
+
+
+def compute_churn_risk(
+    events: list[dict],
+    transactions: list[dict],
+) -> list[dict]:
+    """Score merchants by churn risk using heuristic signals.
+
+    Risk signals:
+    - Deactivation events (RELATIONSHIP_DEACTIVATED)
+    - Payment gaps (subscription charges missing for expected cycle)
+    - Recent uninstall+reinstall pattern (instability)
+    - Declining charge amounts (contraction)
+
+    Returns list of merchants with risk score (low/medium/high) and factors.
+    """
+    today = date.today()
+
+    # Build merchant event timeline
+    merchant_events: dict[str, list[dict]] = defaultdict(list)
+    for e in events:
+        shop = e.get("shop", {}).get("myshopifyDomain", "")
+        if not shop:
+            continue
+        try:
+            event_date = datetime.fromisoformat(
+                e.get("occurredAt", "").replace("Z", "+00:00")
+            ).date()
+        except ValueError:
+            continue
+        merchant_events[shop].append({
+            "type": e.get("type", ""),
+            "date": event_date,
+        })
+
+    # Build merchant transaction timeline
+    merchant_charges: dict[str, list[dict]] = defaultdict(list)
+    for txn in transactions:
+        if txn.get("__typename") != "AppSubscriptionSale":
+            continue
+        shop = txn.get("shop", {}).get("myshopifyDomain", "")
+        if not shop:
+            continue
+        try:
+            txn_date = datetime.fromisoformat(
+                txn.get("createdAt", "").replace("Z", "+00:00")
+            ).date()
+        except ValueError:
+            continue
+        amount = float(_to_decimal(txn.get("netAmount", {}).get("amount", "0")))
+        merchant_charges[shop].append({"date": txn_date, "amount": amount})
+
+    # Find currently active merchants (installed, not uninstalled)
+    installed: set[str] = set()
+    uninstalled: set[str] = set()
+    for shop, evts in merchant_events.items():
+        sorted_evts = sorted(evts, key=lambda x: x["date"])
+        for evt in sorted_evts:
+            if evt["type"] == "RELATIONSHIP_INSTALLED":
+                installed.add(shop)
+                uninstalled.discard(shop)
+            elif evt["type"] == "RELATIONSHIP_UNINSTALLED":
+                uninstalled.add(shop)
+                installed.discard(shop)
+
+    active_merchants = installed - uninstalled
+
+    # Score each active merchant
+    risk_results = []
+    for shop in active_merchants:
+        risk_score = 0
+        factors: list[str] = []
+        evts = merchant_events.get(shop, [])
+        charges = merchant_charges.get(shop, [])
+
+        # Signal 1: Deactivation events
+        deactivations = [e for e in evts if e["type"] == "RELATIONSHIP_DEACTIVATED"]
+        if deactivations:
+            risk_score += 30
+            factors.append(f"{len(deactivations)} deactivation(s)")
+
+        # Signal 2: Reinstall pattern (uninstall then reinstall)
+        uninstall_count = sum(1 for e in evts if e["type"] == "RELATIONSHIP_UNINSTALLED")
+        install_count = sum(1 for e in evts if e["type"] == "RELATIONSHIP_INSTALLED")
+        if install_count > 1:
+            risk_score += 20
+            factors.append(f"Reinstalled {install_count - 1} time(s) — unstable")
+
+        # Signal 3: Subscription canceled
+        cancels = [e for e in evts if e["type"] == "SUBSCRIPTION_CHARGE_CANCELED"]
+        if cancels:
+            recent_cancel = max(c["date"] for c in cancels)
+            days_since = (today - recent_cancel).days
+            if days_since < 30:
+                risk_score += 25
+                factors.append(f"Subscription canceled {days_since} days ago")
+            elif days_since < 90:
+                risk_score += 10
+                factors.append(f"Subscription canceled {days_since} days ago")
+
+        # Signal 4: Declining charge amounts
+        if len(charges) >= 2:
+            sorted_charges = sorted(charges, key=lambda x: x["date"])
+            last_two = sorted_charges[-2:]
+            if last_two[1]["amount"] < last_two[0]["amount"]:
+                risk_score += 15
+                factors.append(
+                    f"Revenue declined: ${last_two[0]['amount']:.2f} → ${last_two[1]['amount']:.2f}"
+                )
+
+        # Signal 5: Long time since last activity
+        all_dates = [e["date"] for e in evts]
+        if charges:
+            all_dates.extend(c["date"] for c in charges)
+        if all_dates:
+            last_activity = max(all_dates)
+            inactive_days = (today - last_activity).days
+            if inactive_days > 60:
+                risk_score += 20
+                factors.append(f"No activity for {inactive_days} days")
+            elif inactive_days > 30:
+                risk_score += 10
+                factors.append(f"No activity for {inactive_days} days")
+
+        # Classify risk level
+        if risk_score >= 40:
+            risk_level = "high"
+        elif risk_score >= 20:
+            risk_level = "medium"
+        else:
+            risk_level = "low"
+
+        risk_results.append({
+            "shop": shop,
+            "risk_level": risk_level,
+            "risk_score": risk_score,
+            "factors": factors if factors else ["No risk signals detected"],
+        })
+
+    # Sort by risk score descending
+    risk_results.sort(key=lambda x: x["risk_score"], reverse=True)
+    return risk_results
+
+
+def compute_merchant_health(
+    events: list[dict],
+    transactions: list[dict],
+) -> list[dict]:
+    """Score merchants with a composite health grade (A-F).
+
+    Dimensions:
+    - Tenure: how long installed (longer = healthier)
+    - Revenue: total and recent charges (more = healthier)
+    - Stability: no deactivations, no reinstalls (stable = healthier)
+    - Engagement: recent activity (active = healthier)
+
+    Each dimension scored 0-25, total 0-100 → grade A/B/C/D/F.
+    """
+    today = date.today()
+
+    # Build merchant profiles from events
+    merchant_install_date: dict[str, date] = {}
+    merchant_event_counts: dict[str, dict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
+    merchant_last_activity: dict[str, date] = {}
+
+    for e in events:
+        shop = e.get("shop", {}).get("myshopifyDomain", "")
+        if not shop:
+            continue
+        try:
+            event_date = datetime.fromisoformat(
+                e.get("occurredAt", "").replace("Z", "+00:00")
+            ).date()
+        except ValueError:
+            continue
+
+        event_type = e.get("type", "")
+        merchant_event_counts[shop][event_type] += 1
+
+        if event_type == "RELATIONSHIP_INSTALLED":
+            if shop not in merchant_install_date or event_date < merchant_install_date[shop]:
+                merchant_install_date[shop] = event_date
+
+        if shop not in merchant_last_activity or event_date > merchant_last_activity[shop]:
+            merchant_last_activity[shop] = event_date
+
+    # Build revenue data from transactions
+    merchant_revenue: dict[str, Decimal] = defaultdict(Decimal)
+    merchant_recent_revenue: dict[str, Decimal] = defaultdict(Decimal)
+    thirty_days_ago = today - timedelta(days=30)
+
+    for txn in transactions:
+        shop = txn.get("shop", {}).get("myshopifyDomain", "")
+        if not shop:
+            continue
+        amount = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
+        merchant_revenue[shop] += amount
+
+        date_str = txn.get("createdAt", "")
+        if date_str:
+            try:
+                txn_date = datetime.fromisoformat(
+                    date_str.replace("Z", "+00:00")
+                ).date()
+                if txn_date >= thirty_days_ago:
+                    merchant_recent_revenue[shop] += amount
+                if shop not in merchant_last_activity or txn_date > merchant_last_activity[shop]:
+                    merchant_last_activity[shop] = txn_date
+            except ValueError:
+                continue
+
+    # Find active merchants
+    installed: set[str] = set()
+    uninstalled: set[str] = set()
+    for shop, counts in merchant_event_counts.items():
+        if counts.get("RELATIONSHIP_INSTALLED", 0) > counts.get("RELATIONSHIP_UNINSTALLED", 0):
+            installed.add(shop)
+        else:
+            uninstalled.add(shop)
+
+    active = installed - uninstalled
+    results = []
+
+    for shop in active:
+        # Tenure score (0-25): >180 days = 25, 90-180 = 20, 30-90 = 15, <30 = 10
+        install_date = merchant_install_date.get(shop, today)
+        tenure_days = (today - install_date).days
+        if tenure_days > 180:
+            tenure_score = 25
+        elif tenure_days > 90:
+            tenure_score = 20
+        elif tenure_days > 30:
+            tenure_score = 15
+        else:
+            tenure_score = 10
+
+        # Revenue score (0-25): based on total revenue
+        total_rev = float(merchant_revenue.get(shop, Decimal("0")))
+        if total_rev > 100:
+            revenue_score = 25
+        elif total_rev > 50:
+            revenue_score = 20
+        elif total_rev > 10:
+            revenue_score = 15
+        elif total_rev > 0:
+            revenue_score = 10
+        else:
+            revenue_score = 5
+
+        # Stability score (0-25): no deactivations/reinstalls = 25
+        counts = merchant_event_counts.get(shop, {})
+        deactivations = counts.get("RELATIONSHIP_DEACTIVATED", 0)
+        reinstalls = max(counts.get("RELATIONSHIP_INSTALLED", 0) - 1, 0)
+        cancels = counts.get("SUBSCRIPTION_CHARGE_CANCELED", 0)
+        stability_score = 25
+        stability_score -= min(deactivations * 10, 15)
+        stability_score -= min(reinstalls * 8, 10)
+        stability_score -= min(cancels * 5, 10)
+        stability_score = max(stability_score, 0)
+
+        # Engagement score (0-25): recent activity
+        last_active = merchant_last_activity.get(shop, install_date)
+        days_inactive = (today - last_active).days
+        if days_inactive < 7:
+            engagement_score = 25
+        elif days_inactive < 14:
+            engagement_score = 20
+        elif days_inactive < 30:
+            engagement_score = 15
+        elif days_inactive < 60:
+            engagement_score = 10
+        else:
+            engagement_score = 5
+
+        total_score = tenure_score + revenue_score + stability_score + engagement_score
+
+        if total_score >= 85:
+            grade = "A"
+        elif total_score >= 70:
+            grade = "B"
+        elif total_score >= 55:
+            grade = "C"
+        elif total_score >= 40:
+            grade = "D"
+        else:
+            grade = "F"
+
+        results.append({
+            "shop": shop,
+            "grade": grade,
+            "score": total_score,
+            "dimensions": {
+                "tenure": {"score": tenure_score, "days": tenure_days},
+                "revenue": {"score": revenue_score, "total": round(total_rev, 2)},
+                "stability": {"score": stability_score},
+                "engagement": {"score": engagement_score, "days_inactive": days_inactive},
+            },
+        })
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results
+
+
+def compute_business_digest(
+    events: list[dict],
+    transactions: list[dict],
+    period_start: date,
+    period_end: date,
+) -> dict:
+    """Generate a business digest summarizing key metrics for a period.
+
+    Provides a snapshot with highlights, notable changes, and comparison
+    to the previous period. Designed for daily/weekly check-ins.
+    """
+    prev_start, prev_end = previous_period(period_start, period_end)
+
+    # Current period events
+    installs_current = _filter_by_date(
+        [e for e in events if e.get("type") == "RELATIONSHIP_INSTALLED"],
+        period_start, period_end, date_field="occurredAt",
+    )
+    uninstalls_current = _filter_by_date(
+        [e for e in events if e.get("type") == "RELATIONSHIP_UNINSTALLED"],
+        period_start, period_end, date_field="occurredAt",
+    )
+
+    # Previous period events
+    installs_prev = _filter_by_date(
+        [e for e in events if e.get("type") == "RELATIONSHIP_INSTALLED"],
+        prev_start, prev_end, date_field="occurredAt",
+    )
+    uninstalls_prev = _filter_by_date(
+        [e for e in events if e.get("type") == "RELATIONSHIP_UNINSTALLED"],
+        prev_start, prev_end, date_field="occurredAt",
+    )
+
+    # Revenue
+    rev_current = compute_revenue_summary(transactions, period_start, period_end)
+    rev_prev = compute_revenue_summary(transactions, prev_start, prev_end)
+
+    # Highlights
+    highlights: list[str] = []
+    installs_count = len(installs_current)
+    uninstalls_count = len(uninstalls_current)
+    net = installs_count - uninstalls_count
+
+    if installs_count > len(installs_prev):
+        highlights.append(
+            f"Installs up: {installs_count} vs {len(installs_prev)} last period"
+        )
+    elif installs_count < len(installs_prev):
+        highlights.append(
+            f"Installs down: {installs_count} vs {len(installs_prev)} last period"
+        )
+
+    if uninstalls_count > len(uninstalls_prev):
+        highlights.append(
+            f"Churn increased: {uninstalls_count} uninstalls vs {len(uninstalls_prev)} last period"
+        )
+
+    if net > 0:
+        highlights.append(f"Net positive growth: +{net} merchants")
+    elif net < 0:
+        highlights.append(f"Net negative growth: {net} merchants")
+
+    current_mrr = _to_decimal(rev_current.get("mrr", "0"))
+    prev_mrr = _to_decimal(rev_prev.get("mrr", "0"))
+    if current_mrr > prev_mrr:
+        highlights.append(f"MRR grew: ${rev_prev['mrr']} → ${rev_current['mrr']}")
+    elif current_mrr < prev_mrr:
+        highlights.append(f"MRR declined: ${rev_prev['mrr']} → ${rev_current['mrr']}")
+
+    if not highlights:
+        highlights.append("No notable changes this period")
+
+    # New installs list
+    new_installs = [
+        {
+            "shop": e.get("shop", {}).get("myshopifyDomain", "N/A"),
+            "date": e.get("occurredAt", "")[:10],
+        }
+        for e in installs_current
+    ]
+
+    # Recent churns
+    recent_churns = [
+        {
+            "shop": e.get("shop", {}).get("myshopifyDomain", "N/A"),
+            "date": e.get("occurredAt", "")[:10],
+            "reason": e.get("reason", "No reason provided"),
+        }
+        for e in uninstalls_current
+    ]
+
+    return {
+        "period": f"{period_start} to {period_end}",
+        "summary": {
+            "installs": installs_count,
+            "uninstalls": uninstalls_count,
+            "net_growth": net,
+            "mrr": rev_current["mrr"],
+            "total_revenue": rev_current["total_net_revenue"],
+            "active_merchants": rev_current["active_merchants"],
+        },
+        "vs_previous_period": {
+            "installs_change": installs_count - len(installs_prev),
+            "uninstalls_change": uninstalls_count - len(uninstalls_prev),
+            "mrr_change": str(
+                (current_mrr - prev_mrr).quantize(Decimal("0.01"))
+            ),
+        },
+        "highlights": highlights,
+        "new_installs": new_installs[:10],
+        "recent_churns": recent_churns[:10],
+    }

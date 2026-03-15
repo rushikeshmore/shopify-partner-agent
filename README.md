@@ -1,6 +1,6 @@
 # PartnerAgent
 
-MCP server that gives Claude access to your Shopify Partner analytics. 15 tools covering revenue metrics, churn analysis, retention cohorts, and merchant data — everything HeyMantle charges $49-999/mo for, powered by Claude's natural language intelligence.
+MCP server that gives Claude access to your Shopify Partner analytics. 19 tools covering revenue metrics, churn analysis, retention cohorts, merchant health scores, and conversion funnels — everything HeyMantle charges $49-999/mo for, powered by Claude's natural language intelligence.
 
 ## Why
 
@@ -44,6 +44,14 @@ Ask Claude things like:
 |------|-------------|
 | `get_revenue_anomalies` | Detect unusual revenue patterns (statistical) |
 | `get_app_comparison` | Side-by-side metrics across all your apps |
+
+### Enhanced Analytics (4)
+| Tool | What it does |
+|------|-------------|
+| `get_trial_funnel` | Install → paid conversion rate, timing, unconverted merchants |
+| `get_churn_risk` | Score active merchants by churn risk (low/medium/high) with factors |
+| `get_merchant_health` | Composite health grade (A-F) based on tenure, revenue, stability, engagement |
+| `get_business_digest` | Weekly/monthly summary with highlights and period comparison |
 
 ## Setup
 

@@ -21,12 +21,18 @@ from analytics import (
     compute_business_digest,
     compute_churn_analysis,
     compute_churn_risk,
+    compute_credits_adjustments,
     compute_customer_ltv,
+    compute_growth_velocity,
+    compute_install_patterns,
     compute_merchant_health,
+    compute_merchant_timeline,
     compute_mrr_movement,
     compute_payout_summary,
     compute_plan_performance,
+    compute_referral_revenue,
     compute_retention_cohorts,
+    compute_revenue_forecast,
     compute_revenue_summary,
     compute_trial_funnel,
     find_revenue_anomalies,
@@ -963,6 +969,206 @@ async def get_business_digest(
         )
 
         result = compute_business_digest(events, txns, start, end)
+        return json.dumps(result, indent=2)
+    except ShopifyPartnerError as e:
+        return _error(str(e))
+
+
+# =============================================================================
+# Sprint 3: Full Coverage Tools (6)
+# =============================================================================
+
+
+@mcp.tool()
+async def get_revenue_forecast(
+    ctx: Context,
+    app_id: str = "",
+    forecast_months: int = 6,
+) -> str:
+    """Project future MRR for the next 3-6 months.
+
+    Args:
+        app_id: Filter by app (optional).
+        forecast_months: How many months to project (default 6).
+
+    Uses last 6 months of MRR data to calculate average monthly growth
+    rate, then projects forward. Simple linear model.
+    """
+    try:
+        sp = _get_sp(ctx)
+        from datetime import date as d, timedelta as td
+
+        start = d.today() - td(days=210)
+        txns = await sp.get_transactions(
+            app_id=app_id,
+            created_at_min=f"{start}T00:00:00Z",
+            limit=2000,
+        )
+
+        result = compute_revenue_forecast(txns, forecast_months)
+        return json.dumps(result, indent=2)
+    except ShopifyPartnerError as e:
+        return _error(str(e))
+
+
+@mcp.tool()
+async def get_merchant_lookup(
+    app_id: str,
+    shop_domain: str,
+    ctx: Context,
+) -> str:
+    """Get full timeline for a specific merchant.
+
+    Args:
+        app_id: App GID or numeric ID (required).
+        shop_domain: The merchant's myshopify.com domain (required).
+            Example: 'my-store.myshopify.com'
+
+    Shows every event and transaction in chronological order —
+    install, charges, deactivations, uninstalls. Essential for
+    support tickets and merchant relationship review.
+    """
+    try:
+        sp = _get_sp(ctx)
+
+        events = await sp.get_app_events(app_id, limit=500)
+        txns = await sp.get_transactions(app_id=app_id, limit=2000)
+
+        result = compute_merchant_timeline(events, txns, shop_domain)
+        if not result.get("timeline"):
+            return json.dumps({
+                "error": f"No data found for merchant: {shop_domain}",
+                "tip": "Use get_merchants to see all merchant domains.",
+            })
+        return json.dumps(result, indent=2)
+    except ShopifyPartnerError as e:
+        return _error(str(e))
+
+
+@mcp.tool()
+async def get_growth_velocity(
+    app_id: str,
+    ctx: Context,
+    weeks: int = 12,
+) -> str:
+    """Get week-over-week growth trends with acceleration signals.
+
+    Args:
+        app_id: App GID or numeric ID (required).
+        weeks: Number of weeks to analyze (default 12).
+
+    Shows weekly install/uninstall/revenue data and whether growth
+    is accelerating, decelerating, or stable.
+    """
+    try:
+        sp = _get_sp(ctx)
+        from datetime import date as d, timedelta as td
+
+        start = d.today() - td(days=7 * weeks + 7)
+
+        events = await sp.get_app_events(
+            app_id,
+            occurred_at_min=f"{start}T00:00:00Z",
+            limit=500,
+        )
+        txns = await sp.get_transactions(
+            app_id=app_id,
+            created_at_min=f"{start}T00:00:00Z",
+            limit=1000,
+        )
+
+        result = compute_growth_velocity(events, txns, weeks)
+        return json.dumps(result, indent=2)
+    except ShopifyPartnerError as e:
+        return _error(str(e))
+
+
+@mcp.tool()
+async def get_install_patterns(
+    app_id: str,
+    ctx: Context,
+) -> str:
+    """Analyze install patterns by day of week and time of month.
+
+    Args:
+        app_id: App GID or numeric ID (required).
+
+    Shows which days get most installs, early/mid/late month distribution,
+    and monthly trend. Helps time marketing pushes and feature releases.
+    """
+    try:
+        sp = _get_sp(ctx)
+
+        events = await sp.get_app_events(
+            app_id,
+            types=["RELATIONSHIP_INSTALLED"],
+            limit=500,
+        )
+
+        result = compute_install_patterns(events)
+        return json.dumps(result, indent=2)
+    except ShopifyPartnerError as e:
+        return _error(str(e))
+
+
+@mcp.tool()
+async def get_referral_revenue(
+    ctx: Context,
+    period: str = "90d",
+) -> str:
+    """Track referral revenue from merchant referrals to Shopify.
+
+    Args:
+        period: '7d', '30d', '90d', '1y', or custom range.
+
+    Shopify pays partners for referring merchants to the platform.
+    Shows total referral revenue, count, and individual referrals.
+    """
+    try:
+        sp = _get_sp(ctx)
+        start, end = parse_period(period)
+        prev_start, _ = previous_period(start, end)
+
+        txns = await sp.get_transactions(
+            created_at_min=f"{prev_start}T00:00:00Z",
+            created_at_max=f"{end}T23:59:59Z",
+            limit=1000,
+        )
+
+        result = compute_referral_revenue(txns, start, end)
+        return json.dumps(result, indent=2)
+    except ShopifyPartnerError as e:
+        return _error(str(e))
+
+
+@mcp.tool()
+async def get_credits_adjustments(
+    ctx: Context,
+    app_id: str = "",
+    period: str = "90d",
+) -> str:
+    """Track credits, adjustments, and refunds.
+
+    Args:
+        app_id: Filter by app (optional).
+        period: '7d', '30d', '90d', '1y', or custom range.
+
+    Monitors AppSaleCredit and AppSaleAdjustment transactions.
+    Shows how much revenue is being given back, as a percentage
+    of total revenue. High giveback % may indicate product issues.
+    """
+    try:
+        sp = _get_sp(ctx)
+        start, end = parse_period(period)
+
+        txns = await sp.get_transactions(
+            app_id=app_id,
+            created_at_min=f"{start}T00:00:00Z",
+            created_at_max=f"{end}T23:59:59Z",
+            limit=1000,
+        )
+
+        result = compute_credits_adjustments(txns, start, end)
         return json.dumps(result, indent=2)
     except ShopifyPartnerError as e:
         return _error(str(e))

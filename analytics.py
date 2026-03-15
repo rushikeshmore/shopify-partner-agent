@@ -1258,3 +1258,410 @@ def compute_business_digest(
         "new_installs": new_installs[:10],
         "recent_churns": recent_churns[:10],
     }
+
+
+# =============================================================================
+# Sprint 3: Full Coverage Analytics
+# =============================================================================
+
+
+def compute_revenue_forecast(
+    transactions: list[dict],
+    forecast_months: int = 6,
+) -> dict:
+    """Project future MRR based on recent growth and churn trends.
+
+    Uses last 3 months of MRR data to calculate monthly growth rate,
+    then projects forward. Simple linear model — not ML.
+    """
+    today = date.today()
+
+    # Calculate MRR for each of the last 6 months
+    monthly_mrr: list[dict] = []
+    for i in range(6, 0, -1):
+        month_end = today.replace(day=1) - timedelta(days=1) if i == 1 else (
+            today.replace(day=1) - timedelta(days=30 * (i - 1))
+        )
+        month_start = month_end - timedelta(days=29)
+
+        month_txns = _filter_by_date(transactions, month_start, month_end)
+        sub_txns = [t for t in month_txns if t.get("__typename") == "AppSubscriptionSale"]
+
+        merchants: dict[str, Decimal] = {}
+        for txn in sub_txns:
+            shop = txn.get("shop", {}).get("myshopifyDomain", "")
+            if not shop:
+                continue
+            amount = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
+            billing = txn.get("billingInterval", "EVERY_30_DAYS")
+            monthly = amount / 12 if billing == "ANNUAL" else amount
+            merchants[shop] = monthly
+
+        mrr = sum(merchants.values(), Decimal("0"))
+        monthly_mrr.append({
+            "month": month_start.strftime("%Y-%m"),
+            "mrr": float(mrr),
+            "subscribers": len(merchants),
+        })
+
+    # Calculate average monthly growth rate from last 3 months with data
+    mrr_values = [m["mrr"] for m in monthly_mrr if m["mrr"] > 0]
+    if len(mrr_values) >= 2:
+        growth_rates = []
+        for i in range(1, len(mrr_values)):
+            if mrr_values[i - 1] > 0:
+                rate = (mrr_values[i] - mrr_values[i - 1]) / mrr_values[i - 1]
+                growth_rates.append(rate)
+        avg_growth = mean(growth_rates) if growth_rates else 0.0
+    else:
+        avg_growth = 0.0
+
+    current_mrr = mrr_values[-1] if mrr_values else 0.0
+
+    # Project forward
+    projections = []
+    projected_mrr = current_mrr
+    for i in range(1, forecast_months + 1):
+        projected_mrr *= (1 + avg_growth)
+        future_month = today + timedelta(days=30 * i)
+        projections.append({
+            "month": future_month.strftime("%Y-%m"),
+            "projected_mrr": round(projected_mrr, 2),
+        })
+
+    # Annual projection
+    projected_arr = projected_mrr * 12 if projections else current_mrr * 12
+
+    return {
+        "current_mrr": round(current_mrr, 2),
+        "monthly_growth_rate_pct": round(avg_growth * 100, 1),
+        "historical": monthly_mrr,
+        "projections": projections,
+        "projected_arr_end": round(projected_arr, 2),
+        "model": "linear (avg monthly growth rate from last 6 months)",
+        "caveat": "Simple projection — does not account for seasonality or market changes.",
+    }
+
+
+def compute_merchant_timeline(
+    events: list[dict],
+    transactions: list[dict],
+    shop_domain: str,
+) -> dict:
+    """Build a full timeline for a specific merchant.
+
+    Shows every event and transaction in chronological order.
+    Useful for support tickets and merchant relationship review.
+    """
+    timeline: list[dict] = []
+
+    # Add events
+    for e in events:
+        shop = e.get("shop", {}).get("myshopifyDomain", "")
+        if shop != shop_domain:
+            continue
+        entry: dict = {
+            "date": e.get("occurredAt", ""),
+            "type": "event",
+            "event_type": e.get("type", "Unknown"),
+        }
+        if e.get("reason"):
+            entry["reason"] = e["reason"]
+        if e.get("description"):
+            entry["description"] = e["description"]
+        if e.get("charge"):
+            charge = e["charge"]
+            entry["charge_amount"] = charge.get("amount", {}).get("amount", "")
+            entry["charge_currency"] = charge.get("amount", {}).get("currencyCode", "")
+        timeline.append(entry)
+
+    # Add transactions
+    for txn in transactions:
+        shop = txn.get("shop", {}).get("myshopifyDomain", "")
+        if shop != shop_domain:
+            continue
+        net = txn.get("netAmount", {})
+        entry = {
+            "date": txn.get("createdAt", ""),
+            "type": "transaction",
+            "transaction_type": txn.get("__typename", "Unknown"),
+            "net_amount": net.get("amount", "0"),
+            "currency": net.get("currencyCode", "USD"),
+        }
+        if txn.get("billingInterval"):
+            entry["billing_interval"] = txn["billingInterval"]
+        timeline.append(entry)
+
+    # Sort chronologically
+    timeline.sort(key=lambda x: x.get("date", ""))
+
+    # Summary
+    total_revenue = sum(
+        float(_to_decimal(t.get("net_amount", "0")))
+        for t in timeline if t["type"] == "transaction"
+    )
+    install_count = sum(
+        1 for t in timeline
+        if t.get("event_type") == "RELATIONSHIP_INSTALLED"
+    )
+    uninstall_count = sum(
+        1 for t in timeline
+        if t.get("event_type") == "RELATIONSHIP_UNINSTALLED"
+    )
+
+    first_seen = timeline[0]["date"][:10] if timeline else "N/A"
+    last_seen = timeline[-1]["date"][:10] if timeline else "N/A"
+    status = "active" if install_count > uninstall_count else "churned"
+
+    return {
+        "shop": shop_domain,
+        "status": status,
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+        "total_revenue": round(total_revenue, 2),
+        "total_events": len(timeline),
+        "installs": install_count,
+        "uninstalls": uninstall_count,
+        "timeline": timeline,
+    }
+
+
+def compute_growth_velocity(
+    events: list[dict],
+    transactions: list[dict],
+    weeks: int = 12,
+) -> dict:
+    """Calculate week-over-week and month-over-month growth trends.
+
+    Shows install velocity, revenue velocity, and acceleration/deceleration.
+    """
+    today = date.today()
+
+    # Weekly data
+    weekly_data: list[dict] = []
+    for i in range(weeks, 0, -1):
+        week_end = today - timedelta(days=7 * (i - 1))
+        week_start = week_end - timedelta(days=6)
+
+        installs = _filter_by_date(
+            [e for e in events if e.get("type") == "RELATIONSHIP_INSTALLED"],
+            week_start, week_end, date_field="occurredAt",
+        )
+        uninstalls = _filter_by_date(
+            [e for e in events if e.get("type") == "RELATIONSHIP_UNINSTALLED"],
+            week_start, week_end, date_field="occurredAt",
+        )
+        week_txns = _filter_by_date(transactions, week_start, week_end)
+        revenue = sum(
+            (float(_to_decimal(t.get("netAmount", {}).get("amount", "0")))
+             for t in week_txns),
+            0.0,
+        )
+
+        weekly_data.append({
+            "week": f"{week_start} to {week_end}",
+            "installs": len(installs),
+            "uninstalls": len(uninstalls),
+            "net_growth": len(installs) - len(uninstalls),
+            "revenue": round(revenue, 2),
+        })
+
+    # Calculate velocity (rate of change)
+    install_velocities: list[float] = []
+    revenue_velocities: list[float] = []
+    for i in range(1, len(weekly_data)):
+        prev_installs = weekly_data[i - 1]["installs"]
+        curr_installs = weekly_data[i]["installs"]
+        if prev_installs > 0:
+            install_velocities.append(
+                (curr_installs - prev_installs) / prev_installs * 100
+            )
+
+        prev_rev = weekly_data[i - 1]["revenue"]
+        curr_rev = weekly_data[i]["revenue"]
+        if prev_rev > 0:
+            revenue_velocities.append(
+                (curr_rev - prev_rev) / prev_rev * 100
+            )
+
+    # Acceleration (is velocity increasing or decreasing?)
+    install_acceleration = "stable"
+    if len(install_velocities) >= 3:
+        recent = install_velocities[-3:]
+        if all(recent[i] > recent[i - 1] for i in range(1, len(recent))):
+            install_acceleration = "accelerating"
+        elif all(recent[i] < recent[i - 1] for i in range(1, len(recent))):
+            install_acceleration = "decelerating"
+
+    # Totals for the full period
+    total_installs = sum(w["installs"] for w in weekly_data)
+    total_uninstalls = sum(w["uninstalls"] for w in weekly_data)
+    avg_weekly_installs = round(total_installs / weeks, 1) if weeks > 0 else 0
+
+    return {
+        "summary": {
+            "total_installs": total_installs,
+            "total_uninstalls": total_uninstalls,
+            "net_growth": total_installs - total_uninstalls,
+            "avg_weekly_installs": avg_weekly_installs,
+            "install_trend": install_acceleration,
+        },
+        "weekly_data": weekly_data,
+        "weeks_analyzed": weeks,
+    }
+
+
+def compute_install_patterns(
+    events: list[dict],
+) -> dict:
+    """Analyze install patterns by day of week and time of month.
+
+    Helps identify best times for marketing pushes and feature releases.
+    """
+    day_counts: dict[str, int] = defaultdict(int)
+    month_period_counts: dict[str, int] = defaultdict(int)
+    monthly_counts: dict[str, int] = defaultdict(int)
+
+    installs = [e for e in events if e.get("type") == "RELATIONSHIP_INSTALLED"]
+
+    for e in installs:
+        date_str = e.get("occurredAt", "")
+        if not date_str:
+            continue
+        try:
+            dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            # Day of week
+            day_name = dt.strftime("%A")
+            day_counts[day_name] += 1
+
+            # Period of month
+            day_num = dt.day
+            if day_num <= 10:
+                month_period_counts["early (1-10)"] += 1
+            elif day_num <= 20:
+                month_period_counts["mid (11-20)"] += 1
+            else:
+                month_period_counts["late (21-31)"] += 1
+
+            # Monthly trend
+            monthly_counts[dt.strftime("%Y-%m")] += 1
+        except ValueError:
+            continue
+
+    # Sort days by count
+    day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    days_sorted = {d: day_counts.get(d, 0) for d in day_order}
+    best_day = max(days_sorted, key=days_sorted.get) if days_sorted else "N/A"
+
+    # Sort months
+    monthly_sorted = dict(sorted(monthly_counts.items()))
+
+    return {
+        "total_installs_analyzed": len(installs),
+        "by_day_of_week": days_sorted,
+        "best_day": best_day,
+        "by_month_period": dict(month_period_counts),
+        "monthly_trend": monthly_sorted,
+    }
+
+
+def compute_referral_revenue(
+    transactions: list[dict],
+    period_start: date,
+    period_end: date,
+) -> dict:
+    """Track referral revenue from ReferralTransaction type.
+
+    Shopify pays partners for referring merchants to the platform.
+    """
+    current = _filter_by_date(transactions, period_start, period_end)
+    referrals = [t for t in current if t.get("__typename") == "ReferralTransaction"]
+
+    total_gross = Decimal("0")
+    shops: list[dict] = []
+    for txn in referrals:
+        gross = _to_decimal(txn.get("grossAmount", {}).get("amount", "0"))
+        total_gross += gross
+        shops.append({
+            "shop": txn.get("shop", {}).get("myshopifyDomain", "N/A"),
+            "amount": str(gross.quantize(Decimal("0.01"))),
+            "date": txn.get("createdAt", "")[:10],
+        })
+
+    prev_start, prev_end = previous_period(period_start, period_end)
+    prev_referrals = [
+        t for t in _filter_by_date(transactions, prev_start, prev_end)
+        if t.get("__typename") == "ReferralTransaction"
+    ]
+    prev_total = sum(
+        (_to_decimal(t.get("grossAmount", {}).get("amount", "0")) for t in prev_referrals),
+        Decimal("0"),
+    )
+
+    return {
+        "total_referral_revenue": str(total_gross.quantize(Decimal("0.01"))),
+        "referral_count": len(referrals),
+        "previous_period_revenue": str(prev_total.quantize(Decimal("0.01"))),
+        "referrals": shops,
+        "period": f"{period_start} to {period_end}",
+    }
+
+
+def compute_credits_adjustments(
+    transactions: list[dict],
+    period_start: date,
+    period_end: date,
+) -> dict:
+    """Track credits, adjustments, and refunds.
+
+    Monitors AppSaleCredit and AppSaleAdjustment transactions —
+    how much revenue is being given back.
+    """
+    current = _filter_by_date(transactions, period_start, period_end)
+    credits = [t for t in current if t.get("__typename") == "AppSaleCredit"]
+    adjustments = [t for t in current if t.get("__typename") == "AppSaleAdjustment"]
+
+    total_credits = sum(
+        (_to_decimal(t.get("netAmount", {}).get("amount", "0")) for t in credits),
+        Decimal("0"),
+    )
+    total_adjustments = sum(
+        (_to_decimal(t.get("netAmount", {}).get("amount", "0")) for t in adjustments),
+        Decimal("0"),
+    )
+
+    # Total gross revenue for context
+    all_revenue = sum(
+        (_to_decimal(t.get("netAmount", {}).get("amount", "0"))
+         for t in current if t.get("__typename") in (
+             "AppSubscriptionSale", "AppUsageSale", "AppOneTimeSale"
+         )),
+        Decimal("0"),
+    )
+
+    giveback_pct = (
+        float(abs(total_credits + total_adjustments) / all_revenue * 100)
+        if all_revenue > 0
+        else 0.0
+    )
+
+    credit_details = [
+        {
+            "shop": t.get("shop", {}).get("myshopifyDomain", "N/A"),
+            "app": t.get("app", {}).get("name", "N/A"),
+            "amount": t.get("netAmount", {}).get("amount", "0"),
+            "date": t.get("createdAt", "")[:10],
+        }
+        for t in credits + adjustments
+    ]
+
+    return {
+        "total_credits": str(total_credits.quantize(Decimal("0.01"))),
+        "total_adjustments": str(total_adjustments.quantize(Decimal("0.01"))),
+        "combined": str((total_credits + total_adjustments).quantize(Decimal("0.01"))),
+        "credit_count": len(credits),
+        "adjustment_count": len(adjustments),
+        "giveback_pct_of_revenue": round(giveback_pct, 1),
+        "details": credit_details,
+        "period": f"{period_start} to {period_end}",
+    }

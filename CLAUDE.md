@@ -11,7 +11,7 @@ queries.py           → GraphQL query string constants
 analytics.py         → Pure computation functions (MRR, churn, ARPU, cohorts, anomalies)
 ```
 
-## 19 MCP Tools
+## 25 MCP Tools
 
 **Core Data (5):** discover_apps, get_app_details, get_app_events, get_transactions, get_merchants
 
@@ -22,6 +22,8 @@ analytics.py         → Pure computation functions (MRR, churn, ARPU, cohorts, 
 **Insight (2):** get_revenue_anomalies, get_app_comparison
 
 **Enhanced Analytics (4):** get_trial_funnel, get_churn_risk, get_merchant_health, get_business_digest
+
+**Full Coverage (6):** get_revenue_forecast, get_merchant_lookup, get_growth_velocity, get_install_patterns, get_referral_revenue, get_credits_adjustments
 
 ## API Details
 - Endpoint: `POST https://partners.shopify.com/{org_id}/api/2026-01/graphql.json`

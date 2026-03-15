@@ -149,4 +149,4 @@ The Shopify Partner API is **read-only** (no mutations). Rate limit: 4 requests/
 
 ## License
 
-MIT
+AGPL-3.0 — see [LICENSE](LICENSE)

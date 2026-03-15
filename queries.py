@@ -6,8 +6,6 @@ Keeping these separate from the client keeps both files readable —
 GraphQL strings are verbose (30-50 lines each).
 """
 
-from __future__ import annotations
-
 # --- App Queries ---
 
 QUERY_APP_DETAILS = """

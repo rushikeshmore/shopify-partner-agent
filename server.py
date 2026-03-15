@@ -1,7 +1,7 @@
 """
 PartnerAgent — Shopify Partner MCP Server.
 
-15 tools that give Claude full access to Shopify Partner analytics.
+25 tools that give Claude full access to Shopify Partner analytics.
 Replaces HeyMantle/SaaS Insights/Baremetrics with natural language queries.
 
 Run via Claude Code:
@@ -14,6 +14,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 from mcp.server.fastmcp import Context, FastMCP
 
@@ -648,9 +649,8 @@ async def get_churned_merchants(
     """
     try:
         sp = _get_sp(ctx)
-        from datetime import date as date_cls, timedelta as td_cls
 
-        date_from = (date_cls.today() - td_cls(days=days)).isoformat()
+        date_from = (date.today() - timedelta(days=days)).isoformat()
 
         events = await sp.get_app_events(
             app_id,
@@ -704,9 +704,8 @@ async def get_revenue_anomalies(
     """
     try:
         sp = _get_sp(ctx)
-        from datetime import date as date_cls, timedelta as td_cls
 
-        start = date_cls.today() - td_cls(days=lookback_days)
+        start = date.today() - timedelta(days=lookback_days)
         txns = await sp.get_transactions(
             app_id=app_id,
             created_at_min=f"{start}T00:00:00Z",
@@ -996,9 +995,8 @@ async def get_revenue_forecast(
     """
     try:
         sp = _get_sp(ctx)
-        from datetime import date as d, timedelta as td
 
-        start = d.today() - td(days=210)
+        start = date.today() - timedelta(days=210)
         txns = await sp.get_transactions(
             app_id=app_id,
             created_at_min=f"{start}T00:00:00Z",
@@ -1062,9 +1060,8 @@ async def get_growth_velocity(
     """
     try:
         sp = _get_sp(ctx)
-        from datetime import date as d, timedelta as td
 
-        start = d.today() - td(days=7 * weeks + 7)
+        start = date.today() - timedelta(days=7 * weeks + 7)
 
         events = await sp.get_app_events(
             app_id,

@@ -1279,10 +1279,15 @@ def compute_revenue_forecast(
     # Calculate MRR for each of the last 6 months
     monthly_mrr: list[dict] = []
     for i in range(6, 0, -1):
-        month_end = today.replace(day=1) - timedelta(days=1) if i == 1 else (
-            today.replace(day=1) - timedelta(days=30 * (i - 1))
-        )
-        month_start = month_end - timedelta(days=29)
+        # Walk back i months from today's month start to get exact boundaries
+        first_of_current = today.replace(day=1)
+        target_month = (first_of_current.month - i - 1) % 12 + 1
+        target_year = first_of_current.year + (first_of_current.month - i - 1) // 12
+        month_start = date(target_year, target_month, 1)
+        # month_end = last day of that month = day before next month's 1st
+        next_month = target_month % 12 + 1
+        next_year = target_year + (1 if next_month == 1 else 0)
+        month_end = date(next_year, next_month, 1) - timedelta(days=1)
 
         month_txns = _filter_by_date(transactions, month_start, month_end)
         sub_txns = [t for t in month_txns if t.get("__typename") == "AppSubscriptionSale"]
@@ -1323,9 +1328,10 @@ def compute_revenue_forecast(
     projected_mrr = current_mrr
     for i in range(1, forecast_months + 1):
         projected_mrr *= (1 + avg_growth)
-        future_month = today + timedelta(days=30 * i)
+        future_month_num = (today.month - 1 + i) % 12 + 1
+        future_year = today.year + (today.month - 1 + i) // 12
         projections.append({
-            "month": future_month.strftime("%Y-%m"),
+            "month": f"{future_year}-{future_month_num:02d}",
             "projected_mrr": round(projected_mrr, 2),
         })
 

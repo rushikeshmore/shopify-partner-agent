@@ -1,5 +1,5 @@
 [project]
-name = "partner-agent"
+name = "shopify-partner-agent"
 version = "0.3.0"
 description = "MCP server for Shopify Partner API analytics"
 requires-python = ">=3.12"

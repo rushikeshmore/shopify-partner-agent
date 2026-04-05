@@ -1,10 +1,10 @@
-# PartnerAgent
+# Shopify Partner Agent
 
 MCP server that gives Claude access to your Shopify Partner analytics. 25 tools covering revenue metrics, churn analysis, retention cohorts, merchant health scores, conversion funnels, revenue forecasting, and growth velocity -- everything HeyMantle charges $49-999/mo for, powered by Claude's natural language intelligence.
 
 ## Why
 
-Existing Shopify MCP servers connect to the **Admin API** (store operations). None connect to the **Partner API** (app developer analytics). PartnerAgent fills this gap.
+Existing Shopify MCP servers connect to the **Admin API** (store operations). None connect to the **Partner API** (app developer analytics). Shopify Partner Agent fills this gap.
 
 Ask Claude things like:
 - "What's my MRR?"
@@ -75,8 +75,8 @@ Ask Claude things like:
 ### 2. Install
 
 ```bash
-git clone https://github.com/YourUsername/partner-agent.git
-cd partner-agent
+git clone https://github.com/rushikeshmore/shopify-partner-agent.git
+cd shopify-partner-agent
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -100,9 +100,9 @@ Find your app GIDs: Partners Dashboard → Apps → click app → ID is in the U
 ### 4. Register with Claude Code
 
 ```bash
-claude mcp add partner-agent \
-  /path/to/partner-agent/.venv/bin/python \
-  /path/to/partner-agent/server.py
+claude mcp add shopify-partner-agent \
+  /path/to/shopify-partner-agent/.venv/bin/python \
+  /path/to/shopify-partner-agent/server.py
 ```
 
 ### 5. Use it

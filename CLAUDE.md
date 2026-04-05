@@ -1,4 +1,4 @@
-# PartnerAgent -- Shopify Partner MCP Server
+# Shopify Partner Agent -- MCP Server
 
 ## What This Is
 MCP server that connects Claude to the Shopify Partner GraphQL API. Gives Claude access to app analytics, revenue metrics, churn data, and merchant info -- replacing dashboards like HeyMantle ($49-999/mo).
@@ -48,7 +48,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 # Fill .env with Partner API credentials
-claude mcp add partner-agent .venv/bin/python server.py
+claude mcp add shopify-partner-agent .venv/bin/python server.py
 ```
 
 ## Tool Usage Tips

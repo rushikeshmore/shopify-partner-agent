@@ -1,11 +1,11 @@
 """
-PartnerAgent -- Shopify Partner MCP Server.
+Shopify Partner Agent -- MCP Server.
 
 25 tools that give Claude full access to Shopify Partner analytics.
 Replaces HeyMantle/SaaS Insights/Baremetrics with natural language queries.
 
 Run via Claude Code:
-    claude mcp add partner-agent /path/to/.venv/bin/python /path/to/server.py
+    claude mcp add shopify-partner-agent /path/to/.venv/bin/python /path/to/server.py
 """
 
 from __future__ import annotations
@@ -138,7 +138,7 @@ async def discover_apps(ctx: Context) -> str:
             return json.dumps(
                 {
                     "apps": [],
-                    "message": "No apps found. Add app GIDs to SHOPIFY_APP_IDS in .env.",
+                    "message": "No apps found. Add GIDs to SHOPIFY_APP_IDS in .env.",
                 }
             )
         return json.dumps({"apps": result, "count": len(result)}, indent=2)

@@ -1,5 +1,5 @@
 """
-Analytics computation functions for PartnerAgent.
+Analytics computation functions for Shopify Partner Agent.
 
 Pure functions that take raw transaction/event lists and return computed
 metrics. No API calls -- just math. Independently testable.

@@ -1,6 +1,6 @@
 # PartnerAgent
 
-MCP server that gives Claude access to your Shopify Partner analytics. 25 tools covering revenue metrics, churn analysis, retention cohorts, merchant health scores, conversion funnels, revenue forecasting, and growth velocity — everything HeyMantle charges $49-999/mo for, powered by Claude's natural language intelligence.
+MCP server that gives Claude access to your Shopify Partner analytics. 25 tools covering revenue metrics, churn analysis, retention cohorts, merchant health scores, conversion funnels, revenue forecasting, and growth velocity -- everything HeyMantle charges $49-999/mo for, powered by Claude's natural language intelligence.
 
 ## Why
 
@@ -139,7 +139,7 @@ All formulas match industry standards (HeyMantle, Baremetrics, ChartMogul):
 ## Architecture
 
 ```
-server.py            → FastMCP entry point, 15 tool definitions
+server.py            -> FastMCP entry point, 25 tool definitions
 shopify_partner.py   → GraphQL client with pagination + rate limiting
 queries.py           → GraphQL query constants
 analytics.py         → Pure computation functions (no API calls)
@@ -149,4 +149,4 @@ The Shopify Partner API is **read-only** (no mutations). Rate limit: 4 requests/
 
 ## License
 
-AGPL-3.0 — see [LICENSE](LICENSE)
+AGPL-3.0 -- see [LICENSE](LICENSE)

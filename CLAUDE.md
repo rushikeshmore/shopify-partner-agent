@@ -1,14 +1,14 @@
-# PartnerAgent — Shopify Partner MCP Server
+# PartnerAgent -- Shopify Partner MCP Server
 
 ## What This Is
-MCP server that connects Claude to the Shopify Partner GraphQL API. Gives Claude access to app analytics, revenue metrics, churn data, and merchant info — replacing dashboards like HeyMantle ($49-999/mo).
+MCP server that connects Claude to the Shopify Partner GraphQL API. Gives Claude access to app analytics, revenue metrics, churn data, and merchant info -- replacing dashboards like HeyMantle ($49-999/mo).
 
 ## Architecture
 ```
-server.py            → FastMCP, 15 @mcp.tool() definitions
-shopify_partner.py   → ShopifyPartnerClient (async GraphQL + pagination + rate limiting)
-queries.py           → GraphQL query string constants
-analytics.py         → Pure computation functions (MRR, churn, ARPU, cohorts, anomalies)
+server.py            -> FastMCP, 25 @mcp.tool() definitions
+shopify_partner.py   -> ShopifyPartnerClient (async GraphQL + pagination + rate limiting)
+queries.py           -> GraphQL query string constants
+analytics.py         -> Pure computation functions (MRR, churn, ARPU, cohorts, anomalies)
 ```
 
 ## 25 MCP Tools
@@ -29,14 +29,14 @@ analytics.py         → Pure computation functions (MRR, churn, ARPU, cohorts, 
 - Endpoint: `POST https://partners.shopify.com/{org_id}/api/2026-01/graphql.json`
 - Auth: Static token via `X-Shopify-Access-Token` header
 - Rate limit: 4 req/sec (0.3s sleep between requests)
-- Read-only — no mutations
+- Read-only -- no mutations
 
 ## Key Constraints
-- No `apps` query — discover from transactions or configure in `.env`
+- No `apps` query -- discover from transactions or configure in `.env`
 - App IDs must be GID format: `gid://partners/App/1234`
-- Financial amounts are string decimals — use `Decimal` for math
-- `billingInterval` can be `EVERY_30_DAYS` or `ANNUAL` — divide annual by 12 for MRR
-- GraphQL can return HTTP 200 with `errors` in body — check both
+- Financial amounts are string decimals -- use `Decimal` for math
+- `billingInterval` can be `EVERY_30_DAYS` or `ANNUAL` -- divide annual by 12 for MRR
+- GraphQL can return HTTP 200 with `errors` in body -- check both
 
 ## Stack
 Python 3.12, FastMCP (mcp>=1.26.0), httpx, python-dotenv
@@ -50,3 +50,11 @@ cp .env.example .env
 # Fill .env with Partner API credentials
 claude mcp add partner-agent .venv/bin/python server.py
 ```
+
+## Tool Usage Tips
+- Start with `discover_apps` to get app GIDs before calling app-specific tools
+- Use `get_business_digest` for quick overview, then drill down with specific tools
+- `get_merchant_lookup` needs an exact myshopify.com domain -- get it from `get_merchants` first
+- Period format: '7d', '30d', '90d', '1y', or 'YYYY-MM-DD:YYYY-MM-DD'
+- Revenue tools accept optional app_id -- omit to get all apps combined
+- For churn investigation: get_churn_analysis -> get_churned_merchants -> get_merchant_lookup

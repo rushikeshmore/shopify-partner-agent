@@ -3,7 +3,7 @@ Shopify Partner API client.
 
 Async GraphQL client with automatic pagination and rate limiting.
 All methods are async. Returns parsed JSON (dicts / lists).
-Auth is a static token — no OAuth, no refresh needed.
+Auth is a static token -- no OAuth, no refresh needed.
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ from dotenv import load_dotenv
 
 from queries import QUERY_APP_DETAILS, QUERY_APP_EVENTS, QUERY_TRANSACTIONS
 
+__all__ = ["ShopifyPartnerClient", "ShopifyPartnerError", "create_client"]
+
 API_VERSION = "2026-01"
 
 
@@ -24,6 +26,12 @@ class ShopifyPartnerError(Exception):
     """Raised when a Shopify Partner API call fails."""
 
     def __init__(self, status_code: int, message: str) -> None:
+        """Initialize with HTTP status code and error message.
+
+        Args:
+            status_code: HTTP status code (0 for connection errors).
+            message: Human-readable error description.
+        """
         self.status_code = status_code
         super().__init__(f"Shopify Partner API {status_code}: {message}")
 
@@ -38,6 +46,14 @@ class ShopifyPartnerClient:
         app_ids: list[str],
         api_version: str = API_VERSION,
     ) -> None:
+        """Initialize the client with Partner API credentials.
+
+        Args:
+            org_id: Shopify Partner organization ID (from URL).
+            access_token: Partner API access token.
+            app_ids: List of app GIDs to manage.
+            api_version: API version string. Defaults to API_VERSION.
+        """
         self.org_id = org_id
         self.access_token = access_token
         self.app_ids = app_ids
@@ -48,7 +64,12 @@ class ShopifyPartnerClient:
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create the shared httpx client."""
+        """Get or create the shared httpx client.
+
+        Returns:
+            Shared httpx.AsyncClient with auth headers configured.
+        """
+        # Reuse client across requests to benefit from HTTP/2 connection pooling
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 timeout=60.0,
@@ -69,6 +90,16 @@ class ShopifyPartnerClient:
 
         Handles both HTTP errors and GraphQL errors (which come back as 200).
         Retries once on 429 (rate limit) with 2s backoff.
+
+        Args:
+            query: GraphQL query string.
+            variables: Query variables dict (optional).
+
+        Returns:
+            Parsed data dict from the GraphQL response.
+
+        Raises:
+            ShopifyPartnerError: If HTTP or GraphQL error occurs.
         """
         client = await self._get_client()
         body: dict = {"query": query}
@@ -79,6 +110,7 @@ class ShopifyPartnerClient:
             resp = await client.post(self.endpoint, json=body)
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
+            # Partner API 429s are rare but happen under burst -- single retry
             if e.response.status_code == 429:
                 await asyncio.sleep(2)
                 resp = await client.post(self.endpoint, json=body)
@@ -96,7 +128,7 @@ class ShopifyPartnerClient:
             messages = [err.get("message", str(err)) for err in data["errors"]]
             raise ShopifyPartnerError(200, "; ".join(messages))
 
-        # Rate limit: 4 req/sec — sleep 0.3s between requests
+        # Rate limit: 4 req/sec -- sleep 0.3s between requests
         await asyncio.sleep(0.3)
 
         return data.get("data", {})
@@ -148,7 +180,17 @@ class ShopifyPartnerClient:
     # --- App Methods ---
 
     async def get_app(self, app_id: str) -> dict:
-        """Get details for a specific app by GID."""
+        """Get details for a specific app by GID.
+
+        Args:
+            app_id: App GID or numeric ID (will be normalized).
+
+        Returns:
+            Dict with app id, name, and apiKey.
+
+        Raises:
+            ShopifyPartnerError: If the API request fails.
+        """
         app_id = _normalize_app_id(app_id)
         data = await self._graphql(QUERY_APP_DETAILS, {"appId": app_id})
         return data.get("app", {})
@@ -172,7 +214,14 @@ class ShopifyPartnerClient:
             created_at_max: ISO datetime string (optional).
             types: List of TransactionType strings (optional).
             limit: Max transactions to return (default 100).
+
+        Returns:
+            List of transaction node dicts (type varies by __typename).
+
+        Raises:
+            ShopifyPartnerError: If the API request fails.
         """
+        # Cap per-page size at 100 (Partner API maximum for transactions)
         variables: dict = {"first": min(limit, 100)}
         if app_id:
             variables["appId"] = _normalize_app_id(app_id)
@@ -209,6 +258,13 @@ class ShopifyPartnerClient:
             occurred_at_min: ISO datetime string (optional).
             occurred_at_max: ISO datetime string (optional).
             limit: Max events to return (default 100).
+
+        Returns:
+            List of event node dicts with type, occurredAt, shop,
+            and type-specific fields.
+
+        Raises:
+            ShopifyPartnerError: If the API request fails.
         """
         app_id = _normalize_app_id(app_id)
         variables: dict = {"appId": app_id, "first": min(limit, 100)}
@@ -232,6 +288,12 @@ def _normalize_app_id(app_id: str) -> str:
 
     Accepts '1234' or 'gid://partners/App/1234'.
     Always returns 'gid://partners/App/1234'.
+
+    Args:
+        app_id: Numeric ID or full GID string.
+
+    Returns:
+        GID-formatted app ID string.
     """
     if app_id.startswith("gid://"):
         return app_id
@@ -239,7 +301,17 @@ def _normalize_app_id(app_id: str) -> str:
 
 
 def create_client() -> ShopifyPartnerClient:
-    """Create a ShopifyPartnerClient from environment variables."""
+    """Create a ShopifyPartnerClient from environment variables.
+
+    Reads SHOPIFY_ORG_ID, SHOPIFY_ACCESS_TOKEN, SHOPIFY_API_VERSION,
+    and SHOPIFY_APP_IDS from .env file in the project root.
+
+    Returns:
+        Configured ShopifyPartnerClient ready for API calls.
+
+    Raises:
+        ShopifyPartnerError: If required env vars are missing.
+    """
     load_dotenv(Path(__file__).parent / ".env")
 
     org_id = os.environ.get("SHOPIFY_ORG_ID", "")

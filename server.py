@@ -1,5 +1,5 @@
 """
-PartnerAgent — Shopify Partner MCP Server.
+PartnerAgent -- Shopify Partner MCP Server.
 
 25 tools that give Claude full access to Shopify Partner analytics.
 Replaces HeyMantle/SaaS Insights/Baremetrics with natural language queries.
@@ -52,7 +52,14 @@ class AppContext:
 
 @asynccontextmanager
 async def lifespan(app: FastMCP) -> AsyncIterator[AppContext]:
-    """Initialize and clean up the Shopify Partner client."""
+    """Initialize and clean up the Shopify Partner client.
+
+    Args:
+        app: The FastMCP application instance.
+
+    Yields:
+        AppContext containing the initialized ShopifyPartnerClient.
+    """
     sp = create_client()
     try:
         yield AppContext(sp=sp)
@@ -64,17 +71,32 @@ mcp = FastMCP("Shopify Partner", lifespan=lifespan)
 
 
 def _error(msg: str) -> str:
-    """Return a JSON error string for tool responses."""
+    """Return a JSON error string for tool responses.
+
+    Args:
+        msg: Error message to include.
+
+    Returns:
+        JSON string with a single "error" key.
+    """
     return json.dumps({"error": msg})
 
 
 def _get_sp(ctx: Context) -> ShopifyPartnerClient:
-    """Extract the Shopify Partner client from the MCP context."""
+    """Extract the Shopify Partner client from the MCP context.
+
+    Args:
+        ctx: FastMCP request context with lifespan state.
+
+    Returns:
+        The ShopifyPartnerClient instance from the lifespan context.
+    """
     return ctx.request_context.lifespan_context.sp
 
 
 # =============================================================================
 # Core Data Tools (5)
+# Core tools expose raw API data -- Claude uses these for ad-hoc questions.
 # =============================================================================
 
 
@@ -83,8 +105,11 @@ async def discover_apps(ctx: Context) -> str:
     """Discover all Shopify apps in your partner account.
 
     Checks configured app IDs from .env AND scans recent transactions
-    for additional apps. Returns app GIDs and names — use these IDs
+    for additional apps. Returns app GIDs and names -- use these IDs
     for all other tools.
+
+    Returns:
+        JSON string with keys: apps (list of id/name dicts), count.
     """
     try:
         sp = _get_sp(ctx)
@@ -110,10 +135,12 @@ async def discover_apps(ctx: Context) -> str:
 
         result = [{"id": gid, "name": name} for gid, name in apps.items()]
         if not result:
-            return json.dumps({
-                "apps": [],
-                "message": "No apps found. Add app GIDs to SHOPIFY_APP_IDS in .env.",
-            })
+            return json.dumps(
+                {
+                    "apps": [],
+                    "message": "No apps found. Add app GIDs to SHOPIFY_APP_IDS in .env.",
+                }
+            )
         return json.dumps({"apps": result, "count": len(result)}, indent=2)
     except ShopifyPartnerError as e:
         return _error(str(e))
@@ -126,7 +153,8 @@ async def get_app_details(app_id: str, ctx: Context) -> str:
     Args:
         app_id: App GID (e.g., 'gid://partners/App/1234') or numeric ID.
 
-    Returns app name, API key, and GID.
+    Returns:
+        JSON string with app name, API key, and GID.
     """
     try:
         sp = _get_sp(ctx)
@@ -162,8 +190,9 @@ async def get_app_events(
         date_to: End date (YYYY-MM-DD format, optional).
         limit: Max events to return (default 100).
 
-    Returns events with type, shop domain, date, and uninstall reasons
-    where available.
+    Returns:
+        JSON string with keys: events (list with type, shop, date),
+        count, app_id.
     """
     try:
         sp = _get_sp(ctx)
@@ -234,7 +263,9 @@ async def get_transactions(
             REFERRAL_TRANSACTION
         limit: Max transactions (default 100).
 
-    Returns transaction type, amount, app, shop, and date.
+    Returns:
+        JSON string with keys: transactions (list with type, amount,
+        app, shop, date), count.
     """
     try:
         sp = _get_sp(ctx)
@@ -277,14 +308,14 @@ async def get_transactions(
             result.append(entry)
 
         if not result:
-            return json.dumps({
-                "transactions": [],
-                "count": 0,
-                "message": "No transactions found for the given filters.",
-            })
-        return json.dumps(
-            {"transactions": result, "count": len(result)}, indent=2
-        )
+            return json.dumps(
+                {
+                    "transactions": [],
+                    "count": 0,
+                    "message": "No transactions found for the given filters.",
+                }
+            )
+        return json.dumps({"transactions": result, "count": len(result)}, indent=2)
     except ShopifyPartnerError as e:
         return _error(str(e))
 
@@ -302,8 +333,11 @@ async def get_merchants(
         status: 'active' (current installs), 'churned' (uninstalled),
                 or 'all' (both). Default 'active'.
 
-    Derived from app events. Shows shop name, domain, install/uninstall
-    dates. For churned merchants, includes uninstall reason if available.
+    Derived from app events.
+
+    Returns:
+        JSON string with keys: merchants (list with shop, status,
+        dates, reasons), count, summary.
     """
     try:
         sp = _get_sp(ctx)
@@ -368,8 +402,12 @@ async def get_merchants(
         )
 
         summary = {
-            "total_active": sum(1 for m in merchants.values() if m["status"] == "active"),
-            "total_churned": sum(1 for m in merchants.values() if m["status"] == "churned"),
+            "total_active": sum(
+                1 for m in merchants.values() if m["status"] == "active"
+            ),
+            "total_churned": sum(
+                1 for m in merchants.values() if m["status"] == "churned"
+            ),
         }
 
         return json.dumps(
@@ -382,6 +420,7 @@ async def get_merchants(
 
 # =============================================================================
 # Revenue Analytics Tools (4)
+# Revenue tools delegate to analytics.py pure functions -- keeps server.py thin.
 # =============================================================================
 
 
@@ -397,8 +436,10 @@ async def get_revenue_summary(
         app_id: Filter by app (optional, defaults to all apps).
         period: '7d', '30d', '90d', '1y', or 'YYYY-MM-DD:YYYY-MM-DD'.
 
-    Returns MRR, ARR, total net revenue, Shopify fees, growth rate vs.
-    previous period, ARPU, and breakdown by app and currency.
+    Returns:
+        JSON string with MRR, ARR, total net revenue, Shopify fees,
+        growth rate vs. previous period, ARPU, and breakdown by app
+        and currency.
     """
     try:
         sp = _get_sp(ctx)
@@ -432,7 +473,10 @@ async def get_mrr_movement(
         period: '7d', '30d', '90d', '1y', or 'YYYY-MM-DD:YYYY-MM-DD'.
 
     Shows how MRR changed between current and previous period.
-    Net New MRR = New + Reactivation + Expansion - Contraction - Churn.
+
+    Returns:
+        JSON string with new, expansion, contraction, churn,
+        reactivation MRR values and net new MRR.
     """
     try:
         sp = _get_sp(ctx)
@@ -472,9 +516,9 @@ async def get_payout_report(
         app_id: Filter by app (optional).
         period: '7d', '30d', '90d', '1y', or 'YYYY-MM-DD:YYYY-MM-DD'.
 
-    Breaks down revenue by transaction type showing gross, fees, and
-    net for each. Note: transaction amounts are for analytics only,
-    not for accounting purposes.
+    Returns:
+        JSON string with gross, fees, net totals and per-type
+        breakdown. Note: amounts are for analytics, not accounting.
     """
     try:
         sp = _get_sp(ctx)
@@ -505,8 +549,9 @@ async def get_plan_performance(
         app_id: Filter by app (optional).
         period: '7d', '30d', '90d', '1y', or 'YYYY-MM-DD:YYYY-MM-DD'.
 
-    Infers plan tiers from subscription charge amounts. Shows subscribers,
-    total revenue, avg revenue per merchant for each tier.
+    Returns:
+        JSON string with subscribers, total revenue, avg revenue
+        per merchant for each inferred pricing tier.
     """
     try:
         sp = _get_sp(ctx)
@@ -528,6 +573,7 @@ async def get_plan_performance(
 
 # =============================================================================
 # Customer Analytics Tools (4)
+# Churn tools require both events AND transactions for cross-referencing.
 # =============================================================================
 
 
@@ -543,9 +589,9 @@ async def get_churn_analysis(
         app_id: App GID or numeric ID (required).
         period: '7d', '30d', '90d', '1y', or 'YYYY-MM-DD:YYYY-MM-DD'.
 
-    Revenue Churn = (Churned MRR + Contraction) / Starting MRR.
-    Logo Churn = Uninstalled merchants / Starting merchants.
-    Includes breakdown of uninstall reasons.
+    Returns:
+        JSON string with logo_churn, revenue_churn, and
+        uninstall_reasons breakdown.
     """
     try:
         sp = _get_sp(ctx)
@@ -581,9 +627,9 @@ async def get_retention_cohorts(
         app_id: Filter by app (optional).
         months: How many months to track per cohort (default 12).
 
-    Cohorts are based on first payment month. Shows what percentage of
-    initial revenue is retained each subsequent month. Values above 100%
-    indicate expansion revenue.
+    Returns:
+        JSON string with monthly cohort table showing revenue
+        retention percentages. Values above 100% indicate expansion.
     """
     try:
         sp = _get_sp(ctx)
@@ -596,10 +642,12 @@ async def get_retention_cohorts(
 
         result = compute_retention_cohorts(txns, months)
         if not result.get("cohorts"):
-            return json.dumps({
-                "cohorts": {},
-                "message": "No subscription data available for cohort analysis.",
-            })
+            return json.dumps(
+                {
+                    "cohorts": {},
+                    "message": "No subscription data available for cohort analysis.",
+                }
+            )
         return json.dumps(result, indent=2)
     except ShopifyPartnerError as e:
         return _error(str(e))
@@ -615,8 +663,9 @@ async def get_customer_ltv(
     Args:
         app_id: Filter by app (optional).
 
-    LTV = ARPU x Average lifespan. Shows top and bottom 5 merchants
-    by total revenue.
+    Returns:
+        JSON string with LTV, ARPU, average lifespan, and top/bottom
+        5 merchants by total revenue.
     """
     try:
         sp = _get_sp(ctx)
@@ -644,8 +693,9 @@ async def get_churned_merchants(
         app_id: App GID or numeric ID (required).
         days: Look back period in days (default 30).
 
-    Shows shop name, domain, uninstall date, and the merchant's stated
-    reason for uninstalling (if provided). Sorted by most recent first.
+    Returns:
+        JSON string with churned merchant list including shop name,
+        domain, uninstall date, and reason. Sorted most recent first.
     """
     try:
         sp = _get_sp(ctx)
@@ -699,8 +749,9 @@ async def get_revenue_anomalies(
         app_id: Filter by app (optional).
         lookback_days: Analysis window in days (default 90).
 
-    Flags days where revenue deviates more than 2 standard deviations
-    from the mean. Identifies spikes and drops.
+    Returns:
+        JSON string with anomaly list (date, amount, expected,
+        deviation, type). Empty list if no unusual patterns found.
     """
     try:
         sp = _get_sp(ctx)
@@ -715,11 +766,13 @@ async def get_revenue_anomalies(
         anomalies = find_revenue_anomalies(txns, lookback_days)
 
         if not anomalies:
-            return json.dumps({
-                "anomalies": [],
-                "message": "No unusual revenue patterns detected.",
-                "lookback_days": lookback_days,
-            })
+            return json.dumps(
+                {
+                    "anomalies": [],
+                    "message": "No unusual revenue patterns detected.",
+                    "lookback_days": lookback_days,
+                }
+            )
 
         return json.dumps(
             {
@@ -743,17 +796,20 @@ async def get_app_comparison(
     Args:
         period: '7d', '30d', '90d', '1y', or 'YYYY-MM-DD:YYYY-MM-DD'.
 
-    Returns a comparison table with revenue, installs, uninstalls,
-    churn rate, and LTV per app. Uses configured app IDs from .env.
+    Returns:
+        JSON string with per-app comparison including revenue,
+        installs, uninstalls, churn rate, and LTV.
     """
     try:
         sp = _get_sp(ctx)
         start, end = parse_period(period)
 
         if not sp.app_ids:
-            return json.dumps({
-                "error": "No app IDs configured. Add SHOPIFY_APP_IDS to .env.",
-            })
+            return json.dumps(
+                {
+                    "error": "No app IDs configured. Add SHOPIFY_APP_IDS to .env.",
+                }
+            )
 
         comparison = []
         for app_id in sp.app_ids:
@@ -787,22 +843,26 @@ async def get_app_comparison(
 
                 revenue = compute_revenue_summary(txns, start, end)
 
-                comparison.append({
-                    "app": app_name,
-                    "app_id": app_id,
-                    "installs": len(installs),
-                    "uninstalls": len(uninstalls),
-                    "net_growth": len(installs) - len(uninstalls),
-                    "mrr": revenue["mrr"],
-                    "total_revenue": revenue["total_net_revenue"],
-                    "active_merchants": revenue["active_merchants"],
-                    "arpu": revenue["arpu"],
-                })
+                comparison.append(
+                    {
+                        "app": app_name,
+                        "app_id": app_id,
+                        "installs": len(installs),
+                        "uninstalls": len(uninstalls),
+                        "net_growth": len(installs) - len(uninstalls),
+                        "mrr": revenue["mrr"],
+                        "total_revenue": revenue["total_net_revenue"],
+                        "active_merchants": revenue["active_merchants"],
+                        "arpu": revenue["arpu"],
+                    }
+                )
             except ShopifyPartnerError as e:
-                comparison.append({
-                    "app_id": app_id,
-                    "error": str(e),
-                })
+                comparison.append(
+                    {
+                        "app_id": app_id,
+                        "error": str(e),
+                    }
+                )
 
         return json.dumps(
             {"comparison": comparison, "period": f"{start} to {end}"},
@@ -813,7 +873,8 @@ async def get_app_comparison(
 
 
 # =============================================================================
-# Enhanced Analytics Tools — Sprint 2 (4)
+# Enhanced Analytics Tools -- Sprint 2 (4)
+# Sprint 2 adds predictive/scoring capabilities on top of raw data.
 # =============================================================================
 
 
@@ -829,8 +890,9 @@ async def get_trial_funnel(
         app_id: App GID or numeric ID (required).
         period: '7d', '30d', '90d', '1y', or 'YYYY-MM-DD:YYYY-MM-DD'.
 
-    Tracks: install → first charge timing, conversion rate, average days
-    to convert, and merchants who installed but never paid.
+    Returns:
+        JSON string with conversion funnel metrics, timing analysis,
+        and lists of converted/unconverted merchants.
     """
     try:
         sp = _get_sp(ctx)
@@ -855,7 +917,10 @@ async def get_churn_risk(
 
     Heuristic signals: deactivation events, subscription cancellations,
     reinstall patterns, declining charges, long inactivity.
-    Scored 0-100 → low (<20), medium (20-39), high (40+).
+
+    Returns:
+        JSON string with risk summary and merchant lists grouped by
+        risk level (high/medium/low) with contributing factors.
     """
     try:
         sp = _get_sp(ctx)
@@ -904,6 +969,10 @@ async def get_merchant_health(
     - Engagement: recent activity
 
     A (85+), B (70-84), C (55-69), D (40-54), F (<40).
+
+    Returns:
+        JSON string with grade distribution summary and per-merchant
+        health scores with dimensional breakdown.
     """
     try:
         sp = _get_sp(ctx)
@@ -950,9 +1019,9 @@ async def get_business_digest(
         app_id: App GID or numeric ID (required).
         period: '7d' (weekly), '30d' (monthly), or custom range.
 
-    Summary of installs, uninstalls, revenue, plus comparison to
-    previous period. Highlights notable changes. Perfect for daily
-    or weekly check-ins.
+    Returns:
+        JSON string with period summary, comparison to previous
+        period, highlights, new installs, and recent churns.
     """
     try:
         sp = _get_sp(ctx)
@@ -975,6 +1044,7 @@ async def get_business_digest(
 
 # =============================================================================
 # Sprint 3: Full Coverage Tools (6)
+# Sprint 3 completes coverage with forecasting, patterns, and referrals.
 # =============================================================================
 
 
@@ -990,8 +1060,9 @@ async def get_revenue_forecast(
         app_id: Filter by app (optional).
         forecast_months: How many months to project (default 6).
 
-    Uses last 6 months of MRR data to calculate average monthly growth
-    rate, then projects forward. Simple linear model.
+    Returns:
+        JSON string with current MRR, growth rate, historical data,
+        monthly projections, and projected ARR.
     """
     try:
         sp = _get_sp(ctx)
@@ -1022,9 +1093,9 @@ async def get_merchant_lookup(
         shop_domain: The merchant's myshopify.com domain (required).
             Example: 'my-store.myshopify.com'
 
-    Shows every event and transaction in chronological order —
-    install, charges, deactivations, uninstalls. Essential for
-    support tickets and merchant relationship review.
+    Returns:
+        JSON string with merchant status, revenue total, and full
+        chronological timeline of events and transactions.
     """
     try:
         sp = _get_sp(ctx)
@@ -1034,10 +1105,12 @@ async def get_merchant_lookup(
 
         result = compute_merchant_timeline(events, txns, shop_domain)
         if not result.get("timeline"):
-            return json.dumps({
-                "error": f"No data found for merchant: {shop_domain}",
-                "tip": "Use get_merchants to see all merchant domains.",
-            })
+            return json.dumps(
+                {
+                    "error": f"No data found for merchant: {shop_domain}",
+                    "tip": "Use get_merchants to see all merchant domains.",
+                }
+            )
         return json.dumps(result, indent=2)
     except ShopifyPartnerError as e:
         return _error(str(e))
@@ -1055,8 +1128,9 @@ async def get_growth_velocity(
         app_id: App GID or numeric ID (required).
         weeks: Number of weeks to analyze (default 12).
 
-    Shows weekly install/uninstall/revenue data and whether growth
-    is accelerating, decelerating, or stable.
+    Returns:
+        JSON string with weekly install/uninstall/revenue data and
+        acceleration/deceleration signals.
     """
     try:
         sp = _get_sp(ctx)
@@ -1090,8 +1164,9 @@ async def get_install_patterns(
     Args:
         app_id: App GID or numeric ID (required).
 
-    Shows which days get most installs, early/mid/late month distribution,
-    and monthly trend. Helps time marketing pushes and feature releases.
+    Returns:
+        JSON string with install counts by day of week, month period,
+        monthly trend, and best day for installs.
     """
     try:
         sp = _get_sp(ctx)
@@ -1118,8 +1193,9 @@ async def get_referral_revenue(
     Args:
         period: '7d', '30d', '90d', '1y', or custom range.
 
-    Shopify pays partners for referring merchants to the platform.
-    Shows total referral revenue, count, and individual referrals.
+    Returns:
+        JSON string with total referral revenue, count, previous
+        period comparison, and individual referral details.
     """
     try:
         sp = _get_sp(ctx)
@@ -1150,9 +1226,9 @@ async def get_credits_adjustments(
         app_id: Filter by app (optional).
         period: '7d', '30d', '90d', '1y', or custom range.
 
-    Monitors AppSaleCredit and AppSaleAdjustment transactions.
-    Shows how much revenue is being given back, as a percentage
-    of total revenue. High giveback % may indicate product issues.
+    Returns:
+        JSON string with credit/adjustment totals, giveback
+        percentage, and individual transaction details.
     """
     try:
         sp = _get_sp(ctx)
@@ -1171,5 +1247,6 @@ async def get_credits_adjustments(
         return _error(str(e))
 
 
+# stdio transport -- MCP clients (Claude Code, Cursor, etc.) connect via stdin/stdout
 if __name__ == "__main__":
     mcp.run(transport="stdio")

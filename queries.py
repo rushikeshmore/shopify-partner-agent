@@ -2,11 +2,13 @@
 GraphQL query constants for the Shopify Partner API.
 
 All queries are module-level constants. Named: QUERY_{RESOURCE}_{ACTION}.
-Keeping these separate from the client keeps both files readable —
+Keeping these separate from the client keeps both files readable --
 GraphQL strings are verbose (30-50 lines each).
 """
 
-# --- App Queries ---
+__all__ = ["QUERY_APP_DETAILS", "QUERY_APP_EVENTS", "QUERY_TRANSACTIONS"]
+
+# Minimal fields -- name/apiKey are the only useful fields on the App type.
 
 QUERY_APP_DETAILS = """
 query GetApp($appId: ID!) {
@@ -18,7 +20,7 @@ query GetApp($appId: ID!) {
 }
 """
 
-# --- Transaction Queries ---
+# Union type -- each transaction type has different fields, hence inline fragments.
 
 QUERY_TRANSACTIONS = """
 query GetTransactions(
@@ -96,7 +98,7 @@ query GetTransactions(
 }
 """
 
-# --- App Event Queries ---
+# Events are scoped to a single app (required $appId), unlike transactions.
 
 QUERY_APP_EVENTS = """
 query GetAppEvents(

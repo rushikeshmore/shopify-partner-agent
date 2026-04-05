@@ -2,7 +2,7 @@
 Analytics computation functions for PartnerAgent.
 
 Pure functions that take raw transaction/event lists and return computed
-metrics. No API calls — just math. Independently testable.
+metrics. No API calls -- just math. Independently testable.
 
 All financial math uses Decimal for precision.
 """
@@ -14,6 +14,29 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from statistics import mean, stdev
 
+__all__ = [
+    "compute_business_digest",
+    "compute_churn_analysis",
+    "compute_churn_risk",
+    "compute_credits_adjustments",
+    "compute_customer_ltv",
+    "compute_growth_velocity",
+    "compute_install_patterns",
+    "compute_merchant_health",
+    "compute_merchant_timeline",
+    "compute_mrr_movement",
+    "compute_payout_summary",
+    "compute_plan_performance",
+    "compute_referral_revenue",
+    "compute_retention_cohorts",
+    "compute_revenue_forecast",
+    "compute_revenue_summary",
+    "compute_trial_funnel",
+    "find_revenue_anomalies",
+    "parse_period",
+    "previous_period",
+]
+
 
 # =============================================================================
 # Period Parsing
@@ -23,12 +46,15 @@ from statistics import mean, stdev
 def parse_period(period: str) -> tuple[date, date]:
     """Parse a period string into (start_date, end_date).
 
-    Supported formats:
-        '7d', '30d', '90d', '365d' — relative days from today
-        '1y' — 365 days
-        'YYYY-MM-DD:YYYY-MM-DD' — custom range
+    Args:
+        period: Period string. Supported formats:
+            '7d', '30d', '90d', '365d' -- relative days from today.
+            '1y' -- 365 days.
+            'YYYY-MM-DD:YYYY-MM-DD' -- custom range.
 
-    Returns (start_date, end_date) as date objects.
+    Returns:
+        Tuple of (start_date, end_date) as date objects. Falls back
+        to 30 days if the format is not recognized.
     """
     today = date.today()
 
@@ -60,7 +86,16 @@ def parse_period(period: str) -> tuple[date, date]:
 
 
 def previous_period(start: date, end: date) -> tuple[date, date]:
-    """Calculate the equivalent previous period for growth comparison."""
+    """Calculate the equivalent previous period for growth comparison.
+
+    Args:
+        start: Start date of the current period.
+        end: End date of the current period.
+
+    Returns:
+        Tuple of (prev_start, prev_end) representing the period
+        immediately before the given range, with equal duration.
+    """
     duration = (end - start).days
     prev_end = start - timedelta(days=1)
     prev_start = prev_end - timedelta(days=duration)
@@ -73,7 +108,14 @@ def previous_period(start: date, end: date) -> tuple[date, date]:
 
 
 def _to_decimal(amount_str: str) -> Decimal:
-    """Safely convert a string amount to Decimal."""
+    """Safely convert a string amount to Decimal.
+
+    Args:
+        amount_str: String representation of a decimal number.
+
+    Returns:
+        Decimal value, or Decimal("0") if conversion fails.
+    """
     try:
         return Decimal(str(amount_str))
     except (InvalidOperation, ValueError):
@@ -86,16 +128,25 @@ def _filter_by_date(
     end: date,
     date_field: str = "createdAt",
 ) -> list[dict]:
-    """Filter items by date range."""
+    """Filter items by date range.
+
+    Args:
+        items: List of dicts containing a date field.
+        start: Inclusive start date.
+        end: Inclusive end date.
+        date_field: Key name for the ISO datetime string.
+            Defaults to "createdAt".
+
+    Returns:
+        Filtered list of items within the date range.
+    """
     result = []
     for item in items:
         date_str = item.get(date_field, "")
         if not date_str:
             continue
         try:
-            item_date = datetime.fromisoformat(
-                date_str.replace("Z", "+00:00")
-            ).date()
+            item_date = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
             if start <= item_date <= end:
                 result.append(item)
         except ValueError:
@@ -106,6 +157,8 @@ def _filter_by_date(
 # =============================================================================
 # Revenue Analytics
 # =============================================================================
+
+# MRR calculation: only AppSubscriptionSale counts -- usage/one-time are not recurring
 
 
 def compute_revenue_summary(
@@ -121,9 +174,11 @@ def compute_revenue_summary(
         period_start: Start of the analysis period.
         period_end: End of the analysis period.
 
-    Returns dict with: mrr, arr, total_net_revenue, total_gross_revenue,
-    total_shopify_fees, growth_rate_pct, arpu, active_merchants,
-    transaction_count, by_currency, by_app.
+    Returns:
+        Dict with keys: mrr, arr, total_net_revenue,
+        total_gross_revenue, total_shopify_fees, growth_rate_pct,
+        arpu, active_merchants, transaction_count, by_currency,
+        by_app.
     """
     current = _filter_by_date(transactions, period_start, period_end)
     prev_start, prev_end = previous_period(period_start, period_end)
@@ -140,9 +195,7 @@ def compute_revenue_summary(
     )
 
     # Group by app
-    by_app: dict[str, dict] = defaultdict(
-        lambda: {"net": Decimal("0"), "count": 0}
-    )
+    by_app: dict[str, dict] = defaultdict(lambda: {"net": Decimal("0"), "count": 0})
 
     # Track unique merchants with subscription charges for MRR
     subscription_merchants: dict[str, Decimal] = {}
@@ -190,9 +243,7 @@ def compute_revenue_summary(
         _to_decimal(t.get("netAmount", {}).get("amount", "0")) for t in prev
     )
     growth_pct = (
-        float((total_net - prev_total) / prev_total * 100)
-        if prev_total > 0
-        else None
+        float((total_net - prev_total) / prev_total * 100) if prev_total > 0 else None
     )
 
     return {
@@ -232,9 +283,26 @@ def compute_mrr_movement(
     """Compute MRR movement: new, expansion, contraction, churn, reactivation.
 
     Compares subscription charges between two periods to classify changes.
+
+    Args:
+        current_transactions: Transactions from the current period.
+        previous_transactions: Transactions from the previous period.
+
+    Returns:
+        Dict with keys: new_mrr, expansion_mrr, contraction_mrr,
+        churn_mrr, reactivation_mrr, net_new_mrr,
+        current_subscribers, previous_subscribers.
     """
+
     def _subscription_map(txns: list[dict]) -> dict[str, Decimal]:
-        """Map shop domain → monthly subscription amount."""
+        """Map shop domain to monthly subscription amount.
+
+        Args:
+            txns: Transaction list to scan for AppSubscriptionSale.
+
+        Returns:
+            Dict mapping myshopifyDomain to monthly Decimal amount.
+        """
         result: dict[str, Decimal] = {}
         for txn in txns:
             if txn.get("__typename") != "AppSubscriptionSale":
@@ -264,7 +332,7 @@ def compute_mrr_movement(
         prev_amt = prev_map.get(shop, Decimal("0"))
 
         if prev_amt == 0 and curr_amt > 0:
-            # Could be new or reactivation — we'd need older history
+            # Could be new or reactivation -- we'd need older history
             # to distinguish. For now, treat as new.
             new_mrr += curr_amt
         elif prev_amt > 0 and curr_amt == 0:
@@ -293,11 +361,27 @@ def compute_payout_summary(
     period_start: date,
     period_end: date,
 ) -> dict:
-    """Compute payout summary: gross, fees, net, by type."""
+    """Compute payout summary: gross, fees, net, by type.
+
+    Args:
+        transactions: Raw transaction list from API.
+        period_start: Start of the analysis period.
+        period_end: End of the analysis period.
+
+    Returns:
+        Dict with keys: total_gross, total_shopify_fees,
+        total_net_payout, fee_percentage, transaction_count,
+        period, by_type.
+    """
     current = _filter_by_date(transactions, period_start, period_end)
 
     by_type: dict[str, dict] = defaultdict(
-        lambda: {"gross": Decimal("0"), "fees": Decimal("0"), "net": Decimal("0"), "count": 0}
+        lambda: {
+            "gross": Decimal("0"),
+            "fees": Decimal("0"),
+            "net": Decimal("0"),
+            "count": 0,
+        }
     )
 
     for txn in current:
@@ -346,6 +430,16 @@ def compute_plan_performance(
     """Compute metrics per plan tier, inferred from charge amounts.
 
     Groups subscription charges by amount to identify plan tiers.
+
+    Args:
+        transactions: Raw transaction list from API.
+        period_start: Start of the analysis period.
+        period_end: End of the analysis period.
+
+    Returns:
+        Dict with keys: plans (keyed by price tier), total_plans,
+        period. Each plan has subscribers, total_revenue,
+        transactions, avg_revenue_per_merchant, billing_intervals.
     """
     current = _filter_by_date(transactions, period_start, period_end)
     sub_txns = [t for t in current if t.get("__typename") == "AppSubscriptionSale"]
@@ -397,6 +491,8 @@ def compute_plan_performance(
 
 # =============================================================================
 # Customer / Churn Analytics
+# Churn requires comparing two periods -- we derive starting state from all
+# historical events.
 # =============================================================================
 
 
@@ -409,9 +505,20 @@ def compute_churn_analysis(
     """Compute revenue churn %, subscription churn %, and logo churn %.
 
     Formulas (industry standard, matching HeyMantle):
-        Revenue Churn % = (Churned MRR + Contraction) / Starting MRR × 100
-        Logo Churn %    = Uninstalled merchants / Starting merchants × 100
-        Sub Churn %     = Canceled subscriptions / Starting subs × 100
+        Revenue Churn % = (Churned MRR + Contraction) / Starting MRR x 100
+        Logo Churn %    = Uninstalled merchants / Starting merchants x 100
+
+    Args:
+        events: App event list (installs, uninstalls).
+        transactions: Revenue transaction list.
+        period_start: Start of the analysis period.
+        period_end: End of the analysis period.
+
+    Returns:
+        Dict with keys: logo_churn (starting_merchants,
+        churned_merchants, churn_pct), revenue_churn (churned_mrr,
+        contraction_mrr, revenue_churn_pct), uninstall_reasons,
+        period.
     """
     prev_start, prev_end = previous_period(period_start, period_end)
 
@@ -436,11 +543,13 @@ def compute_churn_analysis(
     )
 
     installed_set = {e.get("shop", {}).get("myshopifyDomain") for e in installs_before}
-    uninstalled_set = {e.get("shop", {}).get("myshopifyDomain") for e in uninstalls_before}
+    uninstalled_set = {
+        e.get("shop", {}).get("myshopifyDomain") for e in uninstalls_before
+    }
     starting_merchants = len(installed_set - uninstalled_set)
-    churned_merchants = len({
-        e.get("shop", {}).get("myshopifyDomain") for e in uninstalls_during
-    })
+    churned_merchants = len(
+        {e.get("shop", {}).get("myshopifyDomain") for e in uninstalls_during}
+    )
 
     logo_churn_pct = (
         round(churned_merchants / starting_merchants * 100, 1)
@@ -476,9 +585,7 @@ def compute_churn_analysis(
         _to_decimal(t.get("netAmount", {}).get("amount", "0")) for t in prev_sub_txns
     )
     revenue_churn_pct = (
-        round(float(starting_mrr / prev_mrr * 100), 1)
-        if prev_mrr > 0
-        else 0.0
+        round(float(starting_mrr / prev_mrr * 100), 1) if prev_mrr > 0 else 0.0
     )
 
     return {
@@ -507,6 +614,15 @@ def compute_retention_cohorts(
 
     Cohorts are based on first payment month (matching HeyMantle).
     Retention = Revenue in month N / Revenue in month 0.
+
+    Args:
+        transactions: Full subscription transaction history.
+        months: Number of months to track per cohort. Defaults to 12.
+
+    Returns:
+        Dict with keys: cohorts (keyed by YYYY-MM, each with
+        merchants, initial_revenue, retention percentages),
+        months_tracked.
     """
     # Group transactions by merchant's first payment month
     merchant_first_payment: dict[str, date] = {}
@@ -524,16 +640,17 @@ def compute_retention_cohorts(
         if not date_str:
             continue
         try:
-            txn_date = datetime.fromisoformat(
-                date_str.replace("Z", "+00:00")
-            ).date()
+            txn_date = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
         except ValueError:
             continue
 
         amount = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
         month_key = txn_date.strftime("%Y-%m")
 
-        if shop not in merchant_first_payment or txn_date < merchant_first_payment[shop]:
+        if (
+            shop not in merchant_first_payment
+            or txn_date < merchant_first_payment[shop]
+        ):
             merchant_first_payment[shop] = txn_date
 
         merchant_monthly_revenue[shop][month_key] += amount
@@ -552,6 +669,8 @@ def compute_retention_cohorts(
 
         # Calculate revenue for each month relative to first payment
         for month_offset in range(months + 1):
+            # timedelta(days=30 * offset) is approximate -- acceptable
+            # for monthly cohort bucketing
             target_date = first_date.replace(day=1) + timedelta(days=30 * month_offset)
             target_key = target_date.strftime("%Y-%m")
             revenue = merchant_monthly_revenue[shop].get(target_key, Decimal("0"))
@@ -588,8 +707,17 @@ def compute_customer_ltv(
 ) -> dict:
     """Compute LTV, ARPU, average lifespan, and top/bottom merchants.
 
-    LTV = ARPU / Monthly churn rate
-    ARPU = Total net revenue / Active merchants
+    LTV = ARPU x Average lifespan (simple model).
+    ARPU = Total net revenue / Active merchants.
+
+    Args:
+        transactions: Revenue transaction list.
+        events: App event list (for context).
+
+    Returns:
+        Dict with keys: ltv, arpu, avg_lifespan_months,
+        total_merchants, total_revenue, top_merchants,
+        bottom_merchants.
     """
     # Revenue per merchant
     merchant_revenue: dict[str, Decimal] = defaultdict(Decimal)
@@ -609,7 +737,10 @@ def compute_customer_ltv(
                 txn_date = datetime.fromisoformat(
                     date_str.replace("Z", "+00:00")
                 ).date()
-                if shop not in merchant_first_txn or txn_date < merchant_first_txn[shop]:
+                if (
+                    shop not in merchant_first_txn
+                    or txn_date < merchant_first_txn[shop]
+                ):
                     merchant_first_txn[shop] = txn_date
                 if shop not in merchant_last_txn or txn_date > merchant_last_txn[shop]:
                     merchant_last_txn[shop] = txn_date
@@ -639,7 +770,7 @@ def compute_customer_ltv(
     merchant_count = len(merchant_revenue)
     arpu = total_revenue / merchant_count if merchant_count > 0 else Decimal("0")
 
-    # Simple LTV = ARPU × average lifespan
+    # Simple LTV = ARPU x average lifespan
     ltv = arpu * Decimal(str(avg_lifespan))
 
     # Top and bottom merchants by revenue
@@ -677,8 +808,17 @@ def find_revenue_anomalies(
 ) -> list[dict]:
     """Detect unusual revenue patterns using statistical deviation.
 
-    Flags days where revenue is > 2 standard deviations from the rolling mean.
-    Also flags: drops to zero after sustained revenue, sudden spikes.
+    Flags days where revenue is > 2 standard deviations from the
+    rolling mean. Also flags drops to zero after sustained revenue.
+
+    Args:
+        transactions: Revenue transaction list.
+        lookback_days: Number of days to analyze. Defaults to 90.
+
+    Returns:
+        List of anomaly dicts with keys: date, amount, expected,
+        deviation_std, type (spike or drop). Empty if insufficient
+        data (< 7 days).
     """
     end = date.today()
     start = end - timedelta(days=lookback_days)
@@ -689,9 +829,7 @@ def find_revenue_anomalies(
     for txn in current:
         date_str = txn.get("createdAt", "")[:10]
         if date_str:
-            amount = float(
-                _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
-            )
+            amount = float(_to_decimal(txn.get("netAmount", {}).get("amount", "0")))
             daily_revenue[date_str] += amount
 
     if len(daily_revenue) < 7:
@@ -710,16 +848,18 @@ def find_revenue_anomalies(
 
     anomalies = []
     if std > 0:
-        for day_str, amount in zip(all_days, values):
+        for day_str, amount in zip(all_days, values, strict=True):
             deviation = (amount - avg) / std
             if abs(deviation) > 2.0:
-                anomalies.append({
-                    "date": day_str,
-                    "amount": round(amount, 2),
-                    "expected": round(avg, 2),
-                    "deviation_std": round(deviation, 1),
-                    "type": "spike" if deviation > 0 else "drop",
-                })
+                anomalies.append(
+                    {
+                        "date": day_str,
+                        "amount": round(amount, 2),
+                        "expected": round(avg, 2),
+                        "deviation_std": round(deviation, 1),
+                        "type": "spike" if deviation > 0 else "drop",
+                    }
+                )
 
     return anomalies
 
@@ -736,8 +876,19 @@ def compute_trial_funnel(
 ) -> dict:
     """Compute trial-to-paid conversion funnel.
 
-    Tracks: Install → First charge timing, conversion rate, average days
-    to convert, and drop-off analysis (installed but never paid).
+    Tracks: install to first charge timing, conversion rate, average
+    days to convert, and drop-off analysis.
+
+    Args:
+        events: App event list (installs and charge events).
+        period_start: Start of the analysis period.
+        period_end: End of the analysis period.
+
+    Returns:
+        Dict with keys: funnel (total_installs, converted,
+        not_converted, conversion_rate_pct), timing (avg/median/
+        fastest/slowest days), converted_merchants (top 10),
+        unconverted_merchants (top 10), period.
     """
     installs = _filter_by_date(
         [e for e in events if e.get("type") == "RELATIONSHIP_INSTALLED"],
@@ -746,8 +897,10 @@ def compute_trial_funnel(
         date_field="occurredAt",
     )
     charges = [
-        e for e in events
-        if e.get("type") in (
+        e
+        for e in events
+        if e.get("type")
+        in (
             "SUBSCRIPTION_CHARGE_ACCEPTED",
             "SUBSCRIPTION_CHARGE_ACTIVATED",
         )
@@ -793,31 +946,31 @@ def compute_trial_funnel(
         if shop in charge_map:
             days = (charge_map[shop] - install_date).days
             if days >= 0:
-                converted.append({
-                    "shop": shop,
-                    "installed": install_date.isoformat(),
-                    "first_charge": charge_map[shop].isoformat(),
-                    "days_to_convert": days,
-                })
+                converted.append(
+                    {
+                        "shop": shop,
+                        "installed": install_date.isoformat(),
+                        "first_charge": charge_map[shop].isoformat(),
+                        "days_to_convert": days,
+                    }
+                )
                 days_to_convert.append(days)
         else:
             days_since_install = (date.today() - install_date).days
-            not_converted.append({
-                "shop": shop,
-                "installed": install_date.isoformat(),
-                "days_since_install": days_since_install,
-            })
+            not_converted.append(
+                {
+                    "shop": shop,
+                    "installed": install_date.isoformat(),
+                    "days_since_install": days_since_install,
+                }
+            )
 
     conversion_rate = (
-        round(len(converted) / total_installs * 100, 1)
-        if total_installs > 0
-        else 0.0
+        round(len(converted) / total_installs * 100, 1) if total_installs > 0 else 0.0
     )
     avg_days = round(mean(days_to_convert), 1) if days_to_convert else 0.0
     median_days = (
-        sorted(days_to_convert)[len(days_to_convert) // 2]
-        if days_to_convert
-        else 0
+        sorted(days_to_convert)[len(days_to_convert) // 2] if days_to_convert else 0
     )
 
     return {
@@ -833,9 +986,9 @@ def compute_trial_funnel(
             "fastest_conversion_days": min(days_to_convert) if days_to_convert else 0,
             "slowest_conversion_days": max(days_to_convert) if days_to_convert else 0,
         },
-        "converted_merchants": sorted(
-            converted, key=lambda x: x["days_to_convert"]
-        )[:10],
+        "converted_merchants": sorted(converted, key=lambda x: x["days_to_convert"])[
+            :10
+        ],
         "unconverted_merchants": sorted(
             not_converted, key=lambda x: x["days_since_install"], reverse=True
         )[:10],
@@ -849,14 +1002,20 @@ def compute_churn_risk(
 ) -> list[dict]:
     """Score merchants by churn risk using heuristic signals.
 
-    Risk signals:
-    - Deactivation events (RELATIONSHIP_DEACTIVATED)
-    - Payment gaps (subscription charges missing for expected cycle)
-    - Recent uninstall+reinstall pattern (instability)
-    - Declining charge amounts (contraction)
+    Risk signals: deactivation events, subscription cancellations,
+    reinstall patterns (instability), declining charge amounts,
+    prolonged inactivity. Scored 0-100 -> low/medium/high.
 
-    Returns list of merchants with risk score (low/medium/high) and factors.
+    Args:
+        events: App event list (full history).
+        transactions: Revenue transaction list (full history).
+
+    Returns:
+        List of merchant dicts sorted by risk_score descending,
+        each with keys: shop, risk_level, risk_score, factors.
     """
+    # Scoring is heuristic, not ML -- weights chosen to surface obvious
+    # risk signals first
     today = date.today()
 
     # Build merchant event timeline
@@ -871,10 +1030,12 @@ def compute_churn_risk(
             ).date()
         except ValueError:
             continue
-        merchant_events[shop].append({
-            "type": e.get("type", ""),
-            "date": event_date,
-        })
+        merchant_events[shop].append(
+            {
+                "type": e.get("type", ""),
+                "date": event_date,
+            }
+        )
 
     # Build merchant transaction timeline
     merchant_charges: dict[str, list[dict]] = defaultdict(list)
@@ -923,11 +1084,10 @@ def compute_churn_risk(
             factors.append(f"{len(deactivations)} deactivation(s)")
 
         # Signal 2: Reinstall pattern (uninstall then reinstall)
-        uninstall_count = sum(1 for e in evts if e["type"] == "RELATIONSHIP_UNINSTALLED")
         install_count = sum(1 for e in evts if e["type"] == "RELATIONSHIP_INSTALLED")
         if install_count > 1:
             risk_score += 20
-            factors.append(f"Reinstalled {install_count - 1} time(s) — unstable")
+            factors.append(f"Reinstalled {install_count - 1} time(s) -- unstable")
 
         # Signal 3: Subscription canceled
         cancels = [e for e in evts if e["type"] == "SUBSCRIPTION_CHARGE_CANCELED"]
@@ -948,7 +1108,9 @@ def compute_churn_risk(
             if last_two[1]["amount"] < last_two[0]["amount"]:
                 risk_score += 15
                 factors.append(
-                    f"Revenue declined: ${last_two[0]['amount']:.2f} → ${last_two[1]['amount']:.2f}"
+                    f"Revenue declined: "
+                    f"${last_two[0]['amount']:.2f} -> "
+                    f"${last_two[1]['amount']:.2f}"
                 )
 
         # Signal 5: Long time since last activity
@@ -973,12 +1135,14 @@ def compute_churn_risk(
         else:
             risk_level = "low"
 
-        risk_results.append({
-            "shop": shop,
-            "risk_level": risk_level,
-            "risk_score": risk_score,
-            "factors": factors if factors else ["No risk signals detected"],
-        })
+        risk_results.append(
+            {
+                "shop": shop,
+                "risk_level": risk_level,
+                "risk_score": risk_score,
+                "factors": factors if factors else ["No risk signals detected"],
+            }
+        )
 
     # Sort by risk score descending
     risk_results.sort(key=lambda x: x["risk_score"], reverse=True)
@@ -991,14 +1155,23 @@ def compute_merchant_health(
 ) -> list[dict]:
     """Score merchants with a composite health grade (A-F).
 
-    Dimensions:
-    - Tenure: how long installed (longer = healthier)
-    - Revenue: total and recent charges (more = healthier)
-    - Stability: no deactivations, no reinstalls (stable = healthier)
-    - Engagement: recent activity (active = healthier)
+    Dimensions (0-25 points each, 0-100 total):
+        Tenure -- how long installed (longer = healthier).
+        Revenue -- total and recent charges (more = healthier).
+        Stability -- no deactivations/reinstalls (stable = healthier).
+        Engagement -- recent activity (active = healthier).
 
-    Each dimension scored 0-25, total 0-100 → grade A/B/C/D/F.
+    Args:
+        events: App event list (full history).
+        transactions: Revenue transaction list (full history).
+
+    Returns:
+        List of merchant dicts sorted by score descending, each with
+        keys: shop, grade (A-F), score (0-100), dimensions.
+
+    Each dimension scored 0-25, total 0-100 -> grade A/B/C/D/F.
     """
+    # Scoring thresholds are calibrated for typical Shopify app merchant profiles
     today = date.today()
 
     # Build merchant profiles from events
@@ -1022,11 +1195,16 @@ def compute_merchant_health(
         event_type = e.get("type", "")
         merchant_event_counts[shop][event_type] += 1
 
-        if event_type == "RELATIONSHIP_INSTALLED":
-            if shop not in merchant_install_date or event_date < merchant_install_date[shop]:
-                merchant_install_date[shop] = event_date
+        if event_type == "RELATIONSHIP_INSTALLED" and (
+            shop not in merchant_install_date
+            or event_date < merchant_install_date[shop]
+        ):
+            merchant_install_date[shop] = event_date
 
-        if shop not in merchant_last_activity or event_date > merchant_last_activity[shop]:
+        if (
+            shop not in merchant_last_activity
+            or event_date > merchant_last_activity[shop]
+        ):
             merchant_last_activity[shop] = event_date
 
     # Build revenue data from transactions
@@ -1049,7 +1227,10 @@ def compute_merchant_health(
                 ).date()
                 if txn_date >= thirty_days_ago:
                     merchant_recent_revenue[shop] += amount
-                if shop not in merchant_last_activity or txn_date > merchant_last_activity[shop]:
+                if (
+                    shop not in merchant_last_activity
+                    or txn_date > merchant_last_activity[shop]
+                ):
                     merchant_last_activity[shop] = txn_date
             except ValueError:
                 continue
@@ -1058,7 +1239,9 @@ def compute_merchant_health(
     installed: set[str] = set()
     uninstalled: set[str] = set()
     for shop, counts in merchant_event_counts.items():
-        if counts.get("RELATIONSHIP_INSTALLED", 0) > counts.get("RELATIONSHIP_UNINSTALLED", 0):
+        installed_n = counts.get("RELATIONSHIP_INSTALLED", 0)
+        uninstalled_n = counts.get("RELATIONSHIP_UNINSTALLED", 0)
+        if installed_n > uninstalled_n:
             installed.add(shop)
         else:
             uninstalled.add(shop)
@@ -1130,17 +1313,22 @@ def compute_merchant_health(
         else:
             grade = "F"
 
-        results.append({
-            "shop": shop,
-            "grade": grade,
-            "score": total_score,
-            "dimensions": {
-                "tenure": {"score": tenure_score, "days": tenure_days},
-                "revenue": {"score": revenue_score, "total": round(total_rev, 2)},
-                "stability": {"score": stability_score},
-                "engagement": {"score": engagement_score, "days_inactive": days_inactive},
-            },
-        })
+        results.append(
+            {
+                "shop": shop,
+                "grade": grade,
+                "score": total_score,
+                "dimensions": {
+                    "tenure": {"score": tenure_score, "days": tenure_days},
+                    "revenue": {"score": revenue_score, "total": round(total_rev, 2)},
+                    "stability": {"score": stability_score},
+                    "engagement": {
+                        "score": engagement_score,
+                        "days_inactive": days_inactive,
+                    },
+                },
+            }
+        )
 
     results.sort(key=lambda x: x["score"], reverse=True)
     return results
@@ -1154,29 +1342,50 @@ def compute_business_digest(
 ) -> dict:
     """Generate a business digest summarizing key metrics for a period.
 
-    Provides a snapshot with highlights, notable changes, and comparison
-    to the previous period. Designed for daily/weekly check-ins.
+    Provides a snapshot with highlights, notable changes, and
+    comparison to the previous period. Designed for daily/weekly
+    check-ins.
+
+    Args:
+        events: App event list (full history for comparison).
+        transactions: Revenue transaction list (spanning both periods).
+        period_start: Start of the current period.
+        period_end: End of the current period.
+
+    Returns:
+        Dict with keys: period, summary (installs, uninstalls,
+        net_growth, mrr, total_revenue, active_merchants),
+        vs_previous_period, highlights, new_installs,
+        recent_churns.
     """
     prev_start, prev_end = previous_period(period_start, period_end)
 
     # Current period events
     installs_current = _filter_by_date(
         [e for e in events if e.get("type") == "RELATIONSHIP_INSTALLED"],
-        period_start, period_end, date_field="occurredAt",
+        period_start,
+        period_end,
+        date_field="occurredAt",
     )
     uninstalls_current = _filter_by_date(
         [e for e in events if e.get("type") == "RELATIONSHIP_UNINSTALLED"],
-        period_start, period_end, date_field="occurredAt",
+        period_start,
+        period_end,
+        date_field="occurredAt",
     )
 
     # Previous period events
     installs_prev = _filter_by_date(
         [e for e in events if e.get("type") == "RELATIONSHIP_INSTALLED"],
-        prev_start, prev_end, date_field="occurredAt",
+        prev_start,
+        prev_end,
+        date_field="occurredAt",
     )
     uninstalls_prev = _filter_by_date(
         [e for e in events if e.get("type") == "RELATIONSHIP_UNINSTALLED"],
-        prev_start, prev_end, date_field="occurredAt",
+        prev_start,
+        prev_end,
+        date_field="occurredAt",
     )
 
     # Revenue
@@ -1200,7 +1409,8 @@ def compute_business_digest(
 
     if uninstalls_count > len(uninstalls_prev):
         highlights.append(
-            f"Churn increased: {uninstalls_count} uninstalls vs {len(uninstalls_prev)} last period"
+            f"Churn increased: {uninstalls_count} uninstalls "
+            f"vs {len(uninstalls_prev)} last period"
         )
 
     if net > 0:
@@ -1250,9 +1460,7 @@ def compute_business_digest(
         "vs_previous_period": {
             "installs_change": installs_count - len(installs_prev),
             "uninstalls_change": uninstalls_count - len(uninstalls_prev),
-            "mrr_change": str(
-                (current_mrr - prev_mrr).quantize(Decimal("0.01"))
-            ),
+            "mrr_change": str((current_mrr - prev_mrr).quantize(Decimal("0.01"))),
         },
         "highlights": highlights,
         "new_installs": new_installs[:10],
@@ -1271,9 +1479,19 @@ def compute_revenue_forecast(
 ) -> dict:
     """Project future MRR based on recent growth and churn trends.
 
-    Uses last 3 months of MRR data to calculate monthly growth rate,
-    then projects forward. Simple linear model — not ML.
+    Uses last 6 months of MRR data to calculate monthly growth rate,
+    then projects forward. Simple linear model -- not ML.
+
+    Args:
+        transactions: Subscription transaction history (6+ months).
+        forecast_months: Number of months to project. Defaults to 6.
+
+    Returns:
+        Dict with keys: current_mrr, monthly_growth_rate_pct,
+        historical (last 6 months), projections (future months),
+        projected_arr_end, model, caveat.
     """
+    # Linear projection -- intentionally simple, caveat included in output
     today = date.today()
 
     # Calculate MRR for each of the last 6 months
@@ -1290,7 +1508,9 @@ def compute_revenue_forecast(
         month_end = date(next_year, next_month, 1) - timedelta(days=1)
 
         month_txns = _filter_by_date(transactions, month_start, month_end)
-        sub_txns = [t for t in month_txns if t.get("__typename") == "AppSubscriptionSale"]
+        sub_txns = [
+            t for t in month_txns if t.get("__typename") == "AppSubscriptionSale"
+        ]
 
         merchants: dict[str, Decimal] = {}
         for txn in sub_txns:
@@ -1303,11 +1523,13 @@ def compute_revenue_forecast(
             merchants[shop] = monthly
 
         mrr = sum(merchants.values(), Decimal("0"))
-        monthly_mrr.append({
-            "month": month_start.strftime("%Y-%m"),
-            "mrr": float(mrr),
-            "subscribers": len(merchants),
-        })
+        monthly_mrr.append(
+            {
+                "month": month_start.strftime("%Y-%m"),
+                "mrr": float(mrr),
+                "subscribers": len(merchants),
+            }
+        )
 
     # Calculate average monthly growth rate from last 3 months with data
     mrr_values = [m["mrr"] for m in monthly_mrr if m["mrr"] > 0]
@@ -1327,13 +1549,15 @@ def compute_revenue_forecast(
     projections = []
     projected_mrr = current_mrr
     for i in range(1, forecast_months + 1):
-        projected_mrr *= (1 + avg_growth)
+        projected_mrr *= 1 + avg_growth
         future_month_num = (today.month - 1 + i) % 12 + 1
         future_year = today.year + (today.month - 1 + i) // 12
-        projections.append({
-            "month": f"{future_year}-{future_month_num:02d}",
-            "projected_mrr": round(projected_mrr, 2),
-        })
+        projections.append(
+            {
+                "month": f"{future_year}-{future_month_num:02d}",
+                "projected_mrr": round(projected_mrr, 2),
+            }
+        )
 
     # Annual projection
     projected_arr = projected_mrr * 12 if projections else current_mrr * 12
@@ -1345,7 +1569,9 @@ def compute_revenue_forecast(
         "projections": projections,
         "projected_arr_end": round(projected_arr, 2),
         "model": "linear (avg monthly growth rate from last 6 months)",
-        "caveat": "Simple projection — does not account for seasonality or market changes.",
+        "caveat": (
+            "Simple projection -- does not account for seasonality or market changes."
+        ),
     }
 
 
@@ -1358,6 +1584,16 @@ def compute_merchant_timeline(
 
     Shows every event and transaction in chronological order.
     Useful for support tickets and merchant relationship review.
+
+    Args:
+        events: App event list (full history).
+        transactions: Revenue transaction list (full history).
+        shop_domain: The merchant's myshopify.com domain.
+
+    Returns:
+        Dict with keys: shop, status (active/churned), first_seen,
+        last_seen, total_revenue, total_events, installs,
+        uninstalls, timeline (chronological list).
     """
     timeline: list[dict] = []
 
@@ -1404,15 +1640,14 @@ def compute_merchant_timeline(
     # Summary
     total_revenue = sum(
         float(_to_decimal(t.get("net_amount", "0")))
-        for t in timeline if t["type"] == "transaction"
+        for t in timeline
+        if t["type"] == "transaction"
     )
     install_count = sum(
-        1 for t in timeline
-        if t.get("event_type") == "RELATIONSHIP_INSTALLED"
+        1 for t in timeline if t.get("event_type") == "RELATIONSHIP_INSTALLED"
     )
     uninstall_count = sum(
-        1 for t in timeline
-        if t.get("event_type") == "RELATIONSHIP_UNINSTALLED"
+        1 for t in timeline if t.get("event_type") == "RELATIONSHIP_UNINSTALLED"
     )
 
     first_seen = timeline[0]["date"][:10] if timeline else "N/A"
@@ -1437,9 +1672,20 @@ def compute_growth_velocity(
     transactions: list[dict],
     weeks: int = 12,
 ) -> dict:
-    """Calculate week-over-week and month-over-month growth trends.
+    """Calculate week-over-week growth trends with acceleration signals.
 
-    Shows install velocity, revenue velocity, and acceleration/deceleration.
+    Shows install velocity, revenue velocity, and whether growth is
+    accelerating, decelerating, or stable.
+
+    Args:
+        events: App event list (recent history).
+        transactions: Revenue transaction list (recent history).
+        weeks: Number of weeks to analyze. Defaults to 12.
+
+    Returns:
+        Dict with keys: summary (total_installs, total_uninstalls,
+        net_growth, avg_weekly_installs, install_trend),
+        weekly_data, weeks_analyzed.
     """
     today = date.today()
 
@@ -1451,26 +1697,34 @@ def compute_growth_velocity(
 
         installs = _filter_by_date(
             [e for e in events if e.get("type") == "RELATIONSHIP_INSTALLED"],
-            week_start, week_end, date_field="occurredAt",
+            week_start,
+            week_end,
+            date_field="occurredAt",
         )
         uninstalls = _filter_by_date(
             [e for e in events if e.get("type") == "RELATIONSHIP_UNINSTALLED"],
-            week_start, week_end, date_field="occurredAt",
+            week_start,
+            week_end,
+            date_field="occurredAt",
         )
         week_txns = _filter_by_date(transactions, week_start, week_end)
         revenue = sum(
-            (float(_to_decimal(t.get("netAmount", {}).get("amount", "0")))
-             for t in week_txns),
+            (
+                float(_to_decimal(t.get("netAmount", {}).get("amount", "0")))
+                for t in week_txns
+            ),
             0.0,
         )
 
-        weekly_data.append({
-            "week": f"{week_start} to {week_end}",
-            "installs": len(installs),
-            "uninstalls": len(uninstalls),
-            "net_growth": len(installs) - len(uninstalls),
-            "revenue": round(revenue, 2),
-        })
+        weekly_data.append(
+            {
+                "week": f"{week_start} to {week_end}",
+                "installs": len(installs),
+                "uninstalls": len(uninstalls),
+                "net_growth": len(installs) - len(uninstalls),
+                "revenue": round(revenue, 2),
+            }
+        )
 
     # Calculate velocity (rate of change)
     install_velocities: list[float] = []
@@ -1486,9 +1740,7 @@ def compute_growth_velocity(
         prev_rev = weekly_data[i - 1]["revenue"]
         curr_rev = weekly_data[i]["revenue"]
         if prev_rev > 0:
-            revenue_velocities.append(
-                (curr_rev - prev_rev) / prev_rev * 100
-            )
+            revenue_velocities.append((curr_rev - prev_rev) / prev_rev * 100)
 
     # Acceleration (is velocity increasing or decreasing?)
     install_acceleration = "stable"
@@ -1522,7 +1774,16 @@ def compute_install_patterns(
 ) -> dict:
     """Analyze install patterns by day of week and time of month.
 
-    Helps identify best times for marketing pushes and feature releases.
+    Helps identify best times for marketing pushes and feature
+    releases.
+
+    Args:
+        events: App event list (install events only, or full list
+            which will be filtered internally).
+
+    Returns:
+        Dict with keys: total_installs_analyzed, by_day_of_week,
+        best_day, by_month_period, monthly_trend.
     """
     day_counts: dict[str, int] = defaultdict(int)
     month_period_counts: dict[str, int] = defaultdict(int)
@@ -1555,7 +1816,15 @@ def compute_install_patterns(
             continue
 
     # Sort days by count
-    day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    day_order = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ]
     days_sorted = {d: day_counts.get(d, 0) for d in day_order}
     best_day = max(days_sorted, key=days_sorted.get) if days_sorted else "N/A"
 
@@ -1579,6 +1848,15 @@ def compute_referral_revenue(
     """Track referral revenue from ReferralTransaction type.
 
     Shopify pays partners for referring merchants to the platform.
+
+    Args:
+        transactions: Revenue transaction list (includes referrals).
+        period_start: Start of the analysis period.
+        period_end: End of the analysis period.
+
+    Returns:
+        Dict with keys: total_referral_revenue, referral_count,
+        previous_period_revenue, referrals (list), period.
     """
     current = _filter_by_date(transactions, period_start, period_end)
     referrals = [t for t in current if t.get("__typename") == "ReferralTransaction"]
@@ -1588,19 +1866,25 @@ def compute_referral_revenue(
     for txn in referrals:
         gross = _to_decimal(txn.get("grossAmount", {}).get("amount", "0"))
         total_gross += gross
-        shops.append({
-            "shop": txn.get("shop", {}).get("myshopifyDomain", "N/A"),
-            "amount": str(gross.quantize(Decimal("0.01"))),
-            "date": txn.get("createdAt", "")[:10],
-        })
+        shops.append(
+            {
+                "shop": txn.get("shop", {}).get("myshopifyDomain", "N/A"),
+                "amount": str(gross.quantize(Decimal("0.01"))),
+                "date": txn.get("createdAt", "")[:10],
+            }
+        )
 
     prev_start, prev_end = previous_period(period_start, period_end)
     prev_referrals = [
-        t for t in _filter_by_date(transactions, prev_start, prev_end)
+        t
+        for t in _filter_by_date(transactions, prev_start, prev_end)
         if t.get("__typename") == "ReferralTransaction"
     ]
     prev_total = sum(
-        (_to_decimal(t.get("grossAmount", {}).get("amount", "0")) for t in prev_referrals),
+        (
+            _to_decimal(t.get("grossAmount", {}).get("amount", "0"))
+            for t in prev_referrals
+        ),
         Decimal("0"),
     )
 
@@ -1620,8 +1904,19 @@ def compute_credits_adjustments(
 ) -> dict:
     """Track credits, adjustments, and refunds.
 
-    Monitors AppSaleCredit and AppSaleAdjustment transactions —
+    Monitors AppSaleCredit and AppSaleAdjustment transactions --
     how much revenue is being given back.
+
+    Args:
+        transactions: Revenue transaction list (includes
+            credits/adjustments).
+        period_start: Start of the analysis period.
+        period_end: End of the analysis period.
+
+    Returns:
+        Dict with keys: total_credits, total_adjustments, combined,
+        credit_count, adjustment_count, giveback_pct_of_revenue,
+        details (list), period.
     """
     current = _filter_by_date(transactions, period_start, period_end)
     credits = [t for t in current if t.get("__typename") == "AppSaleCredit"]
@@ -1638,10 +1933,12 @@ def compute_credits_adjustments(
 
     # Total gross revenue for context
     all_revenue = sum(
-        (_to_decimal(t.get("netAmount", {}).get("amount", "0"))
-         for t in current if t.get("__typename") in (
-             "AppSubscriptionSale", "AppUsageSale", "AppOneTimeSale"
-         )),
+        (
+            _to_decimal(t.get("netAmount", {}).get("amount", "0"))
+            for t in current
+            if t.get("__typename")
+            in ("AppSubscriptionSale", "AppUsageSale", "AppOneTimeSale")
+        ),
         Decimal("0"),
     )
 

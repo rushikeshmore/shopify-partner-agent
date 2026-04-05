@@ -1,5 +1,9 @@
 # Shopify Partner Agent
 
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12+-3776ab.svg)](https://python.org)
+[![MCP Tools: 25](https://img.shields.io/badge/MCP_Tools-25-96bf48.svg)](#tools)
+
 MCP server that gives Claude access to your Shopify Partner analytics. 25 tools covering revenue metrics, churn analysis, retention cohorts, merchant health scores, conversion funnels, revenue forecasting, and growth velocity -- everything HeyMantle charges $49-999/mo for, powered by Claude's natural language intelligence.
 
 ## Why

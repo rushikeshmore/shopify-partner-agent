@@ -10,6 +10,16 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+[project.scripts]
+shopify-partner-agent = "server:mcp.run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.ruff]
 line-length = 88
 target-version = "py312"
@@ -37,6 +47,9 @@ ignore = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
 
 [tool.mypy]
 python_version = "3.12"

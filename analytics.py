@@ -504,7 +504,7 @@ def compute_churn_analysis(
 ) -> dict:
     """Compute revenue churn %, subscription churn %, and logo churn %.
 
-    Formulas (industry standard, matching HeyMantle):
+    Formulas (industry standard SaaS metrics):
         Revenue Churn % = (Churned MRR + Contraction) / Starting MRR x 100
         Logo Churn %    = Uninstalled merchants / Starting merchants x 100
 
@@ -612,7 +612,7 @@ def compute_retention_cohorts(
 ) -> dict:
     """Compute monthly revenue retention cohort table.
 
-    Cohorts are based on first payment month (matching HeyMantle).
+    Cohorts are based on first payment month.
     Retention = Revenue in month N / Revenue in month 0.
 
     Args:

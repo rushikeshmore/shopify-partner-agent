@@ -8,4 +8,7 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+.ruff_cache/
 site/
+tests/
+mcp-directory-submission.md

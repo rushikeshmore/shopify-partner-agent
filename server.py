@@ -2,7 +2,7 @@
 Shopify Partner Agent -- MCP Server.
 
 25 tools that give Claude full access to Shopify Partner analytics.
-Replaces HeyMantle/SaaS Insights/Baremetrics with natural language queries.
+Query your Shopify app business in natural language.
 
 Run via Claude Code:
     claude mcp add shopify-partner-agent /path/to/.venv/bin/python /path/to/server.py
@@ -11,6 +11,8 @@ Run via Claude Code:
 from __future__ import annotations
 
 import json
+import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -41,6 +43,9 @@ from analytics import (
     previous_period,
 )
 from shopify_partner import ShopifyPartnerClient, ShopifyPartnerError, create_client
+
+# stdio transport: all logging must go to stderr, never stdout
+logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
 
 
 @dataclass
@@ -733,7 +738,8 @@ async def get_churned_merchants(
 
 
 # =============================================================================
-# Insight Tools (2)
+# Multi-App Tools (2)
+# Cross-app comparison and anomaly detection across your entire portfolio.
 # =============================================================================
 
 
@@ -873,36 +879,9 @@ async def get_app_comparison(
 
 
 # =============================================================================
-# Enhanced Analytics Tools -- Sprint 2 (4)
-# Sprint 2 adds predictive/scoring capabilities on top of raw data.
+# Merchant Intelligence Tools (4)
+# Scoring, risk assessment, and digest for individual merchants.
 # =============================================================================
-
-
-@mcp.tool()
-async def get_trial_funnel(
-    app_id: str,
-    ctx: Context,
-    period: str = "90d",
-) -> str:
-    """Get trial-to-paid conversion funnel.
-
-    Args:
-        app_id: App GID or numeric ID (required).
-        period: '7d', '30d', '90d', '1y', or 'YYYY-MM-DD:YYYY-MM-DD'.
-
-    Returns:
-        JSON string with conversion funnel metrics, timing analysis,
-        and lists of converted/unconverted merchants.
-    """
-    try:
-        sp = _get_sp(ctx)
-        start, end = parse_period(period)
-
-        events = await sp.get_app_events(app_id, limit=500)
-        result = compute_trial_funnel(events, start, end)
-        return json.dumps(result, indent=2)
-    except ShopifyPartnerError as e:
-        return _error(str(e))
 
 
 @mcp.tool()
@@ -1042,44 +1021,6 @@ async def get_business_digest(
         return _error(str(e))
 
 
-# =============================================================================
-# Sprint 3: Full Coverage Tools (6)
-# Sprint 3 completes coverage with forecasting, patterns, and referrals.
-# =============================================================================
-
-
-@mcp.tool()
-async def get_revenue_forecast(
-    ctx: Context,
-    app_id: str = "",
-    forecast_months: int = 6,
-) -> str:
-    """Project future MRR for the next 3-6 months.
-
-    Args:
-        app_id: Filter by app (optional).
-        forecast_months: How many months to project (default 6).
-
-    Returns:
-        JSON string with current MRR, growth rate, historical data,
-        monthly projections, and projected ARR.
-    """
-    try:
-        sp = _get_sp(ctx)
-
-        start = date.today() - timedelta(days=210)
-        txns = await sp.get_transactions(
-            app_id=app_id,
-            created_at_min=f"{start}T00:00:00Z",
-            limit=2000,
-        )
-
-        result = compute_revenue_forecast(txns, forecast_months)
-        return json.dumps(result, indent=2)
-    except ShopifyPartnerError as e:
-        return _error(str(e))
-
-
 @mcp.tool()
 async def get_merchant_lookup(
     app_id: str,
@@ -1111,6 +1052,71 @@ async def get_merchant_lookup(
                     "tip": "Use get_merchants to see all merchant domains.",
                 }
             )
+        return json.dumps(result, indent=2)
+    except ShopifyPartnerError as e:
+        return _error(str(e))
+
+
+# =============================================================================
+# Growth & Forecasting Tools (6)
+# Trends, patterns, projections, referrals, and credits.
+# =============================================================================
+
+
+@mcp.tool()
+async def get_trial_funnel(
+    app_id: str,
+    ctx: Context,
+    period: str = "90d",
+) -> str:
+    """Get trial-to-paid conversion funnel.
+
+    Args:
+        app_id: App GID or numeric ID (required).
+        period: '7d', '30d', '90d', '1y', or 'YYYY-MM-DD:YYYY-MM-DD'.
+
+    Returns:
+        JSON string with conversion funnel metrics, timing analysis,
+        and lists of converted/unconverted merchants.
+    """
+    try:
+        sp = _get_sp(ctx)
+        start, end = parse_period(period)
+
+        events = await sp.get_app_events(app_id, limit=500)
+        result = compute_trial_funnel(events, start, end)
+        return json.dumps(result, indent=2)
+    except ShopifyPartnerError as e:
+        return _error(str(e))
+
+
+@mcp.tool()
+async def get_revenue_forecast(
+    ctx: Context,
+    app_id: str = "",
+    forecast_months: int = 6,
+) -> str:
+    """Project future MRR for the next 3-6 months.
+
+    Args:
+        app_id: Filter by app (optional).
+        forecast_months: How many months to project (default 6).
+
+    Returns:
+        JSON string with current MRR, growth rate, historical data,
+        monthly projections, and projected ARR.
+    """
+    try:
+        sp = _get_sp(ctx)
+
+        start = date.today() - timedelta(days=210)
+        txns = await sp.get_transactions(
+            app_id=app_id,
+            created_at_min=f"{start}T00:00:00Z",
+            limit=2000,
+        )
+
+        result = compute_revenue_forecast(txns, forecast_months)
         return json.dumps(result, indent=2)
     except ShopifyPartnerError as e:
         return _error(str(e))

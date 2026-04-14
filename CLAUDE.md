@@ -1,14 +1,14 @@
 # Shopify Partner Agent -- MCP Server
 
 ## What This Is
-MCP server that connects Claude to the Shopify Partner GraphQL API. Gives Claude access to app analytics, revenue metrics, churn data, and merchant info -- replacing dashboards like HeyMantle ($49-999/mo).
+MCP server that connects Claude to the Shopify Partner GraphQL API. Gives Claude access to app analytics, revenue metrics, churn data, and merchant info via natural language.
 
 ## Architecture
 ```
-server.py            -> FastMCP, 25 @mcp.tool() definitions
-shopify_partner.py   -> ShopifyPartnerClient (async GraphQL + pagination + rate limiting)
-queries.py           -> GraphQL query string constants
-analytics.py         -> Pure computation functions (MRR, churn, ARPU, cohorts, anomalies)
+server.py           -- FastMCP, 25 @mcp.tool() definitions
+shopify_partner.py  -- ShopifyPartnerClient (async GraphQL + pagination + rate limiting)
+queries.py          -- GraphQL query string constants
+analytics.py        -- Pure computation functions (MRR, churn, ARPU, cohorts, anomalies)
 ```
 
 ## 25 MCP Tools
@@ -19,11 +19,11 @@ analytics.py         -> Pure computation functions (MRR, churn, ARPU, cohorts, a
 
 **Customer Analytics (4):** get_churn_analysis, get_retention_cohorts, get_customer_ltv, get_churned_merchants
 
-**Insight (2):** get_revenue_anomalies, get_app_comparison
+**Growth & Forecasting (6):** get_trial_funnel, get_growth_velocity, get_install_patterns, get_revenue_forecast, get_referral_revenue, get_credits_adjustments
 
-**Enhanced Analytics (4):** get_trial_funnel, get_churn_risk, get_merchant_health, get_business_digest
+**Merchant Intelligence (4):** get_churn_risk, get_merchant_health, get_merchant_lookup, get_business_digest
 
-**Full Coverage (6):** get_revenue_forecast, get_merchant_lookup, get_growth_velocity, get_install_patterns, get_referral_revenue, get_credits_adjustments
+**Multi-App (2):** get_revenue_anomalies, get_app_comparison
 
 ## API Details
 - Endpoint: `POST https://partners.shopify.com/{org_id}/api/2026-01/graphql.json`

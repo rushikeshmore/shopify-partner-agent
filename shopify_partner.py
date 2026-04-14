@@ -320,9 +320,17 @@ def create_client() -> ShopifyPartnerClient:
     app_ids_raw = os.environ.get("SHOPIFY_APP_IDS", "")
 
     if not org_id:
-        raise ShopifyPartnerError(0, "SHOPIFY_ORG_ID not set in .env")
+        raise ShopifyPartnerError(
+            0,
+            "SHOPIFY_ORG_ID not set. Run `cp .env.example .env` and add your "
+            "org ID from partners.shopify.com/{org_id}",
+        )
     if not access_token:
-        raise ShopifyPartnerError(0, "SHOPIFY_ACCESS_TOKEN not set in .env")
+        raise ShopifyPartnerError(
+            0,
+            "SHOPIFY_ACCESS_TOKEN not set. Create a Partner API client at "
+            "Partners Dashboard > Settings > Partner API clients",
+        )
 
     app_ids = [aid.strip() for aid in app_ids_raw.split(",") if aid.strip()]
 

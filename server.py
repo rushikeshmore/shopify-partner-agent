@@ -81,13 +81,10 @@ def _event_in_period(event: dict, start: date, end: date) -> bool:
     if not date_str:
         return False
     try:
-        event_date = datetime.fromisoformat(
-            date_str.replace("Z", "+00:00")
-        ).date()
+        event_date = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
         return start <= event_date <= end
     except ValueError:
         return False
-
 
 
 def _error(msg: str) -> str:
@@ -512,9 +509,7 @@ async def get_mrr_movement(
         events = None
         if app_id:
             events = await sp.get_app_events(app_id, limit=500)
-            all_txns = await sp.get_transactions(
-                app_id=app_id, limit=2000
-            )
+            all_txns = await sp.get_transactions(app_id=app_id, limit=2000)
             result = compute_mrr_movement(
                 all_txns,
                 all_txns,
@@ -859,12 +854,8 @@ async def get_app_comparison(
                 app_name = app.get("name", "Unknown")
 
                 # Get all events and all-time transactions
-                all_events = await sp.get_app_events(
-                    app_id, limit=500
-                )
-                all_txns = await sp.get_transactions(
-                    app_id=app_id, limit=2000
-                )
+                all_events = await sp.get_app_events(app_id, limit=500)
+                all_txns = await sp.get_transactions(app_id=app_id, limit=2000)
 
                 # Count period installs/uninstalls from events
                 installs = [
@@ -1143,9 +1134,7 @@ async def get_revenue_forecast(
         events = None
         if app_id:
             events = await sp.get_app_events(app_id, limit=500)
-            txns = await sp.get_transactions(
-                app_id=app_id, limit=2000
-            )
+            txns = await sp.get_transactions(app_id=app_id, limit=2000)
         else:
             start = date.today() - timedelta(days=210)
             txns = await sp.get_transactions(
@@ -1154,9 +1143,7 @@ async def get_revenue_forecast(
                 limit=2000,
             )
 
-        result = compute_revenue_forecast(
-            txns, forecast_months, events=events
-        )
+        result = compute_revenue_forecast(txns, forecast_months, events=events)
         return json.dumps(result, indent=2)
     except ShopifyPartnerError as e:
         return _error(str(e))

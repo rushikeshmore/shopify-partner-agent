@@ -172,15 +172,18 @@ All formulas match industry-standard SaaS metrics:
 
 | Metric | Formula |
 |--------|---------|
-| MRR | Event-aware: latest subscription amount per active merchant (annual / 12). Uses install/uninstall/freeze events to determine active status. Falls back to charge-based when events unavailable. |
+| MRR | Event-aware: subscription + usage MRR per active merchant (annual / 12, usage trailing 30d). Two-track status model: relationship (installed/uninstalled) + subscription (frozen/canceled/expired). Falls back to charge-based when events unavailable. |
 | Net New MRR | New + Reactivation + Expansion - Contraction - Churn |
+| Quick Ratio | (New + Expansion + Reactivation) / (Contraction + Churn) |
+| Reactivation MRR | Revenue from previously-churned merchants who reinstalled |
 | Revenue Churn % | (Churned MRR + Contraction) / Starting MRR x 100 |
 | Logo Churn % | Uninstalled merchants / Starting merchants x 100 |
 | LTV | ARPU x Average lifespan |
-| ARPU | Total net revenue / Active merchants |
+| ARPU | Total net revenue / Active merchants (excludes churned when events available) |
 | Retention | Revenue in month N / Revenue in month 0 (per cohort) |
 | Health Score | Tenure (0-25) + Revenue (0-25) + Stability (0-25) + Engagement (0-25) |
 | Churn Risk | 5 heuristic signals: deactivations, cancellations, reinstalls, declining charges, inactivity |
+| Growth Velocity | Week-over-week install/revenue trends, revenue grouped by currency |
 
 ## Requirements
 

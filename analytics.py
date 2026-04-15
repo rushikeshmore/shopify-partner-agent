@@ -332,15 +332,11 @@ def _usage_mrr_trailing(
         if not date_str:
             continue
         try:
-            txn_date = datetime.fromisoformat(
-                date_str.replace("Z", "+00:00")
-            ).date()
+            txn_date = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
         except ValueError:
             continue
         if cutoff_start <= txn_date <= cutoff_end:
-            amount = _to_decimal(
-                txn.get("netAmount", {}).get("amount", "0")
-            )
+            amount = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
             result[shop] += amount
 
     return dict(result)
@@ -453,71 +449,42 @@ def compute_revenue_summary(
     # Usage MRR: trailing AppUsageSale per active merchant
     usage_merchants: dict[str, Decimal] = {}
     if events is not None:
-        usage_all = _usage_mrr_trailing(
-            transactions, as_of=period_end
-        )
-        usage_merchants = {
-            s: a
-            for s, a in usage_all.items()
-            if s in currently_active
-        }
+        usage_all = _usage_mrr_trailing(transactions, as_of=period_end)
+        usage_merchants = {s: a for s, a in usage_all.items() if s in currently_active}
 
     # Calculate MRR and derived metrics
-    subscription_mrr = sum(
-        subscription_merchants.values(), Decimal("0")
-    )
+    subscription_mrr = sum(subscription_merchants.values(), Decimal("0"))
     usage_mrr = sum(usage_merchants.values(), Decimal("0"))
     mrr = subscription_mrr + usage_mrr
     arr = mrr * 12
-    total_net = sum(
-        (c["net"] for c in by_currency.values()), Decimal("0")
-    )
-    total_gross = sum(
-        (c["gross"] for c in by_currency.values()), Decimal("0")
-    )
-    total_fees = sum(
-        (c["fees"] for c in by_currency.values()), Decimal("0")
-    )
+    total_net = sum((c["net"] for c in by_currency.values()), Decimal("0"))
+    total_gross = sum((c["gross"] for c in by_currency.values()), Decimal("0"))
+    total_fees = sum((c["fees"] for c in by_currency.values()), Decimal("0"))
     merchant_count = len(active_merchants)
-    arpu = (
-        total_net / merchant_count
-        if merchant_count > 0
-        else Decimal("0")
-    )
+    arpu = total_net / merchant_count if merchant_count > 0 else Decimal("0")
 
     # Growth rate
     prev_total = sum(
-        _to_decimal(t.get("netAmount", {}).get("amount", "0"))
-        for t in prev
+        _to_decimal(t.get("netAmount", {}).get("amount", "0")) for t in prev
     )
     growth_pct = (
-        float((total_net - prev_total) / prev_total * 100)
-        if prev_total > 0
-        else None
+        float((total_net - prev_total) / prev_total * 100) if prev_total > 0 else None
     )
 
     return {
         "mrr": str(mrr.quantize(Decimal("0.01"))),
-        "subscription_mrr": str(
-            subscription_mrr.quantize(Decimal("0.01"))
-        ),
+        "subscription_mrr": str(subscription_mrr.quantize(Decimal("0.01"))),
         "usage_mrr": str(usage_mrr.quantize(Decimal("0.01"))),
         "arr": str(arr.quantize(Decimal("0.01"))),
         "total_net_revenue": str(total_net.quantize(Decimal("0.01"))),
-        "total_gross_revenue": str(
-            total_gross.quantize(Decimal("0.01"))
-        ),
-        "total_shopify_fees": str(
-            total_fees.quantize(Decimal("0.01"))
-        ),
+        "total_gross_revenue": str(total_gross.quantize(Decimal("0.01"))),
+        "total_shopify_fees": str(total_fees.quantize(Decimal("0.01"))),
         "active_merchants": merchant_count,
         "mrr_subscribers": len(subscription_merchants),
         "mrr_method": mrr_method,
         "arpu": str(arpu.quantize(Decimal("0.01"))),
         "transaction_count": len(current),
-        "growth_rate_pct": (
-            round(growth_pct, 1) if growth_pct is not None else None
-        ),
+        "growth_rate_pct": (round(growth_pct, 1) if growth_pct is not None else None),
         "period": f"{period_start} to {period_end}",
         "by_currency": {
             k: {
@@ -574,9 +541,7 @@ def compute_mrr_movement(
             previous_period_end,
         )
 
-    return _mrr_movement_charge_based(
-        current_transactions, previous_transactions
-    )
+    return _mrr_movement_charge_based(current_transactions, previous_transactions)
 
 
 def _mrr_movement_charge_based(
@@ -593,9 +558,7 @@ def _mrr_movement_charge_based(
             shop = txn.get("shop", {}).get("myshopifyDomain", "")
             if not shop:
                 continue
-            amount = _to_decimal(
-                txn.get("netAmount", {}).get("amount", "0")
-            )
+            amount = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
             billing = txn.get("billingInterval", "EVERY_30_DAYS")
             monthly = amount / 12 if billing == "ANNUAL" else amount
             result[shop] = monthly
@@ -623,21 +586,14 @@ def _mrr_movement_charge_based(
         elif curr_amt < prev_amt:
             contraction_mrr += prev_amt - curr_amt
 
-    net_new = (
-        new_mrr + reactivation_mrr + expansion_mrr
-        - contraction_mrr - churn_mrr
-    )
+    net_new = new_mrr + reactivation_mrr + expansion_mrr - contraction_mrr - churn_mrr
 
     return {
         "new_mrr": str(new_mrr.quantize(Decimal("0.01"))),
         "expansion_mrr": str(expansion_mrr.quantize(Decimal("0.01"))),
-        "contraction_mrr": str(
-            contraction_mrr.quantize(Decimal("0.01"))
-        ),
+        "contraction_mrr": str(contraction_mrr.quantize(Decimal("0.01"))),
         "churn_mrr": str(churn_mrr.quantize(Decimal("0.01"))),
-        "reactivation_mrr": str(
-            reactivation_mrr.quantize(Decimal("0.01"))
-        ),
+        "reactivation_mrr": str(reactivation_mrr.quantize(Decimal("0.01"))),
         "net_new_mrr": str(net_new.quantize(Decimal("0.01"))),
         "current_subscribers": len(curr_map),
         "previous_subscribers": len(prev_map),
@@ -653,28 +609,16 @@ def _mrr_movement_event_aware(
 ) -> dict:
     """Event-aware MRR movement with reactivation and Quick Ratio."""
     # Subscription maps at each period end
-    curr_subs = _all_time_subscription_map(
-        transactions, as_of=current_period_end
-    )
-    prev_subs = _all_time_subscription_map(
-        transactions, as_of=previous_period_end
-    )
+    curr_subs = _all_time_subscription_map(transactions, as_of=current_period_end)
+    prev_subs = _all_time_subscription_map(transactions, as_of=previous_period_end)
 
     # Active merchants at each period end
-    curr_active = _active_merchants_from_events(
-        events, as_of=current_period_end
-    )
-    prev_active = _active_merchants_from_events(
-        events, as_of=previous_period_end
-    )
+    curr_active = _active_merchants_from_events(events, as_of=current_period_end)
+    prev_active = _active_merchants_from_events(events, as_of=previous_period_end)
 
     # Filter to active merchants only
-    curr_map = {
-        s: a for s, a in curr_subs.items() if s in curr_active
-    }
-    prev_map = {
-        s: a for s, a in prev_subs.items() if s in prev_active
-    }
+    curr_map = {s: a for s, a in curr_subs.items() if s in curr_active}
+    prev_map = {s: a for s, a in prev_subs.items() if s in prev_active}
 
     # Find merchants known before the previous period (for reactivation)
     all_known_shops: set[str] = set()
@@ -684,9 +628,7 @@ def _mrr_movement_event_aware(
         if not shop or not date_str:
             continue
         try:
-            evt_date = datetime.fromisoformat(
-                date_str.replace("Z", "+00:00")
-            ).date()
+            evt_date = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
         except ValueError:
             continue
         if evt_date <= previous_period_end:
@@ -714,18 +656,11 @@ def _mrr_movement_event_aware(
         elif curr_amt < prev_amt:
             contraction_mrr += prev_amt - curr_amt
 
-    net_new = (
-        new_mrr + reactivation_mrr + expansion_mrr
-        - contraction_mrr - churn_mrr
-    )
+    net_new = new_mrr + reactivation_mrr + expansion_mrr - contraction_mrr - churn_mrr
 
     # Usage MRR delta
-    curr_usage = _usage_mrr_trailing(
-        transactions, as_of=current_period_end
-    )
-    prev_usage = _usage_mrr_trailing(
-        transactions, as_of=previous_period_end
-    )
+    curr_usage = _usage_mrr_trailing(transactions, as_of=current_period_end)
+    prev_usage = _usage_mrr_trailing(transactions, as_of=previous_period_end)
     curr_usage_total = sum(
         (a for s, a in curr_usage.items() if s in curr_active),
         Decimal("0"),
@@ -739,26 +674,16 @@ def _mrr_movement_event_aware(
     # Quick Ratio
     inflow = new_mrr + expansion_mrr + reactivation_mrr
     outflow = contraction_mrr + churn_mrr
-    quick_ratio = (
-        round(float(inflow / outflow), 2)
-        if outflow > 0
-        else None
-    )
+    quick_ratio = round(float(inflow / outflow), 2) if outflow > 0 else None
 
     return {
         "new_mrr": str(new_mrr.quantize(Decimal("0.01"))),
         "expansion_mrr": str(expansion_mrr.quantize(Decimal("0.01"))),
-        "contraction_mrr": str(
-            contraction_mrr.quantize(Decimal("0.01"))
-        ),
+        "contraction_mrr": str(contraction_mrr.quantize(Decimal("0.01"))),
         "churn_mrr": str(churn_mrr.quantize(Decimal("0.01"))),
-        "reactivation_mrr": str(
-            reactivation_mrr.quantize(Decimal("0.01"))
-        ),
+        "reactivation_mrr": str(reactivation_mrr.quantize(Decimal("0.01"))),
         "net_new_mrr": str(net_new.quantize(Decimal("0.01"))),
-        "usage_mrr_change": str(
-            usage_change.quantize(Decimal("0.01"))
-        ),
+        "usage_mrr_change": str(usage_change.quantize(Decimal("0.01"))),
         "quick_ratio": quick_ratio,
         "current_subscribers": len(curr_map),
         "previous_subscribers": len(prev_map),
@@ -1905,10 +1830,7 @@ def compute_revenue_forecast(
     for i in range(6, 0, -1):
         first_of_current = today.replace(day=1)
         target_month = (first_of_current.month - i - 1) % 12 + 1
-        target_year = (
-            first_of_current.year
-            + (first_of_current.month - i - 1) // 12
-        )
+        target_year = first_of_current.year + (first_of_current.month - i - 1) // 12
         month_start = date(target_year, target_month, 1)
         next_month = target_month % 12 + 1
         next_year = target_year + (1 if next_month == 1 else 0)
@@ -1916,37 +1838,23 @@ def compute_revenue_forecast(
 
         if events is not None:
             # Event-aware: MRR snapshot at end of each month
-            subs = _all_time_subscription_map(
-                transactions, as_of=month_end
-            )
-            active = _active_merchants_from_events(
-                events, as_of=month_end
-            )
-            merchants = {
-                s: a for s, a in subs.items() if s in active
-            }
+            subs = _all_time_subscription_map(transactions, as_of=month_end)
+            active = _active_merchants_from_events(events, as_of=month_end)
+            merchants = {s: a for s, a in subs.items() if s in active}
         else:
             # Charge-based: sum subscription charges in the month
-            month_txns = _filter_by_date(
-                transactions, month_start, month_end
-            )
+            month_txns = _filter_by_date(transactions, month_start, month_end)
             sub_txns = [
-                t
-                for t in month_txns
-                if t.get("__typename") == "AppSubscriptionSale"
+                t for t in month_txns if t.get("__typename") == "AppSubscriptionSale"
             ]
             merchants: dict[str, Decimal] = {}
             for txn in sub_txns:
                 shop = txn.get("shop", {}).get("myshopifyDomain", "")
                 if not shop:
                     continue
-                amount = _to_decimal(
-                    txn.get("netAmount", {}).get("amount", "0")
-                )
+                amount = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
                 billing = txn.get("billingInterval", "EVERY_30_DAYS")
-                monthly = (
-                    amount / 12 if billing == "ANNUAL" else amount
-                )
+                monthly = amount / 12 if billing == "ANNUAL" else amount
                 merchants[shop] = monthly
 
         mrr = sum(merchants.values(), Decimal("0"))
@@ -2137,20 +2045,12 @@ def compute_growth_velocity(
         week_txns = _filter_by_date(transactions, week_start, week_end)
         revenue_by_currency: dict[str, float] = defaultdict(float)
         for t in week_txns:
-            currency = t.get("netAmount", {}).get(
-                "currencyCode", "USD"
-            )
-            amount = float(
-                _to_decimal(
-                    t.get("netAmount", {}).get("amount", "0")
-                )
-            )
+            currency = t.get("netAmount", {}).get("currencyCode", "USD")
+            amount = float(_to_decimal(t.get("netAmount", {}).get("amount", "0")))
             revenue_by_currency[currency] += amount
 
         # Round each currency total
-        revenue_by_currency = {
-            k: round(v, 2) for k, v in revenue_by_currency.items()
-        }
+        revenue_by_currency = {k: round(v, 2) for k, v in revenue_by_currency.items()}
 
         weekly_data.append(
             {
@@ -2176,9 +2076,7 @@ def compute_growth_velocity(
         prev_rev = sum(weekly_data[i - 1]["revenue"].values())
         curr_rev = sum(weekly_data[i]["revenue"].values())
         if prev_rev > 0:
-            revenue_velocities.append(
-                (curr_rev - prev_rev) / prev_rev * 100
-            )
+            revenue_velocities.append((curr_rev - prev_rev) / prev_rev * 100)
 
     # Acceleration (is velocity increasing or decreasing?)
     install_acceleration = "stable"

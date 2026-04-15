@@ -270,6 +270,209 @@ class TestMrrMovement:
         result = compute_mrr_movement([], [])
         assert float(result["net_new_mrr"]) == 0
 
+    def test_event_aware_basic(self):
+        """Event-aware mode classifies new and churn correctly."""
+        events = [
+            _event(
+                "RELATIONSHIP_INSTALLED",
+                "a.myshopify.com",
+                days_ago=90,
+            ),
+            _event(
+                "SUBSCRIPTION_CHARGE_ACCEPTED",
+                "a.myshopify.com",
+                days_ago=89,
+            ),
+            _event(
+                "RELATIONSHIP_INSTALLED",
+                "b.myshopify.com",
+                days_ago=90,
+            ),
+            _event(
+                "SUBSCRIPTION_CHARGE_ACCEPTED",
+                "b.myshopify.com",
+                days_ago=89,
+            ),
+            # b churns mid-way
+            _event(
+                "RELATIONSHIP_UNINSTALLED",
+                "b.myshopify.com",
+                days_ago=10,
+            ),
+        ]
+        txns = [
+            _tx(
+                net="30.00",
+                shop="a.myshopify.com",
+                days_ago=80,
+                charge_id="c1",
+            ),
+            _tx(
+                net="50.00",
+                shop="b.myshopify.com",
+                days_ago=80,
+                charge_id="c2",
+            ),
+        ]
+        current_end = date.today()
+        prev_end = date.today() - timedelta(days=30)
+        result = compute_mrr_movement(
+            txns,
+            txns,
+            events=events,
+            current_period_end=current_end,
+            previous_period_end=prev_end,
+        )
+        assert result["mrr_method"] == "event_aware"
+        assert float(result["churn_mrr"]) == 50.0
+        assert result["current_subscribers"] == 1
+        assert result["previous_subscribers"] == 2
+
+    def test_reactivation(self):
+        """Merchant known before prev period, absent then, present now."""
+        events = [
+            _event(
+                "RELATIONSHIP_INSTALLED",
+                "a.myshopify.com",
+                days_ago=120,
+            ),
+            _event(
+                "SUBSCRIPTION_CHARGE_ACCEPTED",
+                "a.myshopify.com",
+                days_ago=119,
+            ),
+            # a churns 60 days ago
+            _event(
+                "RELATIONSHIP_UNINSTALLED",
+                "a.myshopify.com",
+                days_ago=60,
+            ),
+            # a comes back 5 days ago
+            _event(
+                "RELATIONSHIP_INSTALLED",
+                "a.myshopify.com",
+                days_ago=5,
+            ),
+            _event(
+                "SUBSCRIPTION_CHARGE_ACCEPTED",
+                "a.myshopify.com",
+                days_ago=4,
+            ),
+        ]
+        txns = [
+            _tx(
+                net="30.00",
+                shop="a.myshopify.com",
+                days_ago=100,
+                charge_id="c1",
+            ),
+            _tx(
+                net="30.00",
+                shop="a.myshopify.com",
+                days_ago=3,
+                charge_id="c2",
+            ),
+        ]
+        current_end = date.today()
+        prev_end = date.today() - timedelta(days=30)
+        result = compute_mrr_movement(
+            txns,
+            txns,
+            events=events,
+            current_period_end=current_end,
+            previous_period_end=prev_end,
+        )
+        assert float(result["reactivation_mrr"]) == 30.0
+        assert float(result["new_mrr"]) == 0.0
+
+    def test_quick_ratio(self):
+        """Quick Ratio = inflow / outflow."""
+        events = [
+            _event(
+                "RELATIONSHIP_INSTALLED",
+                "a.myshopify.com",
+                days_ago=90,
+            ),
+            _event(
+                "SUBSCRIPTION_CHARGE_ACCEPTED",
+                "a.myshopify.com",
+                days_ago=89,
+            ),
+            _event(
+                "RELATIONSHIP_INSTALLED",
+                "b.myshopify.com",
+                days_ago=90,
+            ),
+            _event(
+                "SUBSCRIPTION_CHARGE_ACCEPTED",
+                "b.myshopify.com",
+                days_ago=89,
+            ),
+            # b churns
+            _event(
+                "RELATIONSHIP_UNINSTALLED",
+                "b.myshopify.com",
+                days_ago=10,
+            ),
+            # c is brand new (after prev period)
+            _event(
+                "RELATIONSHIP_INSTALLED",
+                "c.myshopify.com",
+                days_ago=5,
+            ),
+            _event(
+                "SUBSCRIPTION_CHARGE_ACCEPTED",
+                "c.myshopify.com",
+                days_ago=4,
+            ),
+        ]
+        txns = [
+            _tx(
+                net="30.00",
+                shop="a.myshopify.com",
+                days_ago=80,
+                charge_id="c1",
+            ),
+            _tx(
+                net="50.00",
+                shop="b.myshopify.com",
+                days_ago=80,
+                charge_id="c2",
+            ),
+            _tx(
+                net="40.00",
+                shop="c.myshopify.com",
+                days_ago=3,
+                charge_id="c3",
+            ),
+        ]
+        current_end = date.today()
+        prev_end = date.today() - timedelta(days=30)
+        result = compute_mrr_movement(
+            txns,
+            txns,
+            events=events,
+            current_period_end=current_end,
+            previous_period_end=prev_end,
+        )
+        # new=$40, churn=$50 -> ratio = 40/50 = 0.8
+        assert result["quick_ratio"] == 0.8
+
+    def test_backward_compat(self):
+        """No events = charge-based, same output as before."""
+        current = [
+            _tx(
+                net="50.00",
+                shop="a.myshopify.com",
+                days_ago=5,
+                charge_id="c1",
+            ),
+        ]
+        result = compute_mrr_movement(current, [])
+        assert result["mrr_method"] == "charge_based"
+        assert float(result["new_mrr"]) == 50.0
+        assert "quick_ratio" not in result
+
 
 # ---- compute_payout_summary ----
 
@@ -598,6 +801,38 @@ class TestRevenueForecast:
     def test_empty(self):
         result = compute_revenue_forecast([])
         assert float(result["current_mrr"]) == 0
+
+    def test_event_aware_annual(self):
+        """Annual merchant shows consistent MRR across months."""
+        events = [
+            _event(
+                "RELATIONSHIP_INSTALLED",
+                "annual.myshopify.com",
+                days_ago=200,
+            ),
+            _event(
+                "SUBSCRIPTION_CHARGE_ACCEPTED",
+                "annual.myshopify.com",
+                days_ago=199,
+            ),
+        ]
+        txns = [
+            _tx(
+                net="120.00",
+                shop="annual.myshopify.com",
+                days_ago=180,
+                billing="ANNUAL",
+                charge_id="c1",
+            ),
+        ]
+        result = compute_revenue_forecast(
+            txns, forecast_months=3, events=events
+        )
+        # Every historical month should see $10 MRR
+        for month in result["historical"]:
+            if month["mrr"] > 0:
+                assert month["mrr"] == 10.0
+                assert month["subscribers"] == 1
 
 
 # ---- compute_referral_revenue ----

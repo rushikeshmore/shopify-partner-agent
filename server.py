@@ -16,7 +16,7 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from mcp.server.fastmcp import Context, FastMCP
 
@@ -73,6 +73,21 @@ async def lifespan(app: FastMCP) -> AsyncIterator[AppContext]:
 
 
 mcp = FastMCP("Shopify Partner", lifespan=lifespan)
+
+
+def _event_in_period(event: dict, start: date, end: date) -> bool:
+    """Check if an event's occurredAt date falls within a period."""
+    date_str = event.get("occurredAt", "")
+    if not date_str:
+        return False
+    try:
+        event_date = datetime.fromisoformat(
+            date_str.replace("Z", "+00:00")
+        ).date()
+        return start <= event_date <= end
+    except ValueError:
+        return False
+
 
 
 def _error(msg: str) -> str:
@@ -494,20 +509,34 @@ async def get_mrr_movement(
         start, end = parse_period(period)
         prev_start, prev_end = previous_period(start, end)
 
-        current_txns = await sp.get_transactions(
-            app_id=app_id,
-            created_at_min=f"{start}T00:00:00Z",
-            created_at_max=f"{end}T23:59:59Z",
-            limit=1000,
-        )
-        prev_txns = await sp.get_transactions(
-            app_id=app_id,
-            created_at_min=f"{prev_start}T00:00:00Z",
-            created_at_max=f"{prev_end}T23:59:59Z",
-            limit=1000,
-        )
+        events = None
+        if app_id:
+            events = await sp.get_app_events(app_id, limit=500)
+            all_txns = await sp.get_transactions(
+                app_id=app_id, limit=2000
+            )
+            result = compute_mrr_movement(
+                all_txns,
+                all_txns,
+                events=events,
+                current_period_end=end,
+                previous_period_end=prev_end,
+            )
+        else:
+            current_txns = await sp.get_transactions(
+                app_id=app_id,
+                created_at_min=f"{start}T00:00:00Z",
+                created_at_max=f"{end}T23:59:59Z",
+                limit=1000,
+            )
+            prev_txns = await sp.get_transactions(
+                app_id=app_id,
+                created_at_min=f"{prev_start}T00:00:00Z",
+                created_at_max=f"{prev_end}T23:59:59Z",
+                limit=1000,
+            )
+            result = compute_mrr_movement(current_txns, prev_txns)
 
-        result = compute_mrr_movement(current_txns, prev_txns)
         result["period"] = f"{start} to {end}"
         result["previous_period"] = f"{prev_start} to {prev_end}"
         return json.dumps(result, indent=2)
@@ -829,31 +858,31 @@ async def get_app_comparison(
                 app = await sp.get_app(app_id)
                 app_name = app.get("name", "Unknown")
 
-                # Get events
-                installs = await sp.get_app_events(
-                    app_id,
-                    types=["RELATIONSHIP_INSTALLED"],
-                    occurred_at_min=f"{start}T00:00:00Z",
-                    occurred_at_max=f"{end}T23:59:59Z",
-                    limit=500,
+                # Get all events and all-time transactions
+                all_events = await sp.get_app_events(
+                    app_id, limit=500
                 )
-                uninstalls = await sp.get_app_events(
-                    app_id,
-                    types=["RELATIONSHIP_UNINSTALLED"],
-                    occurred_at_min=f"{start}T00:00:00Z",
-                    occurred_at_max=f"{end}T23:59:59Z",
-                    limit=500,
+                all_txns = await sp.get_transactions(
+                    app_id=app_id, limit=2000
                 )
 
-                # Get transactions
-                txns = await sp.get_transactions(
-                    app_id=app_id,
-                    created_at_min=f"{start}T00:00:00Z",
-                    created_at_max=f"{end}T23:59:59Z",
-                    limit=500,
-                )
+                # Count period installs/uninstalls from events
+                installs = [
+                    e
+                    for e in all_events
+                    if e.get("type") == "RELATIONSHIP_INSTALLED"
+                    and _event_in_period(e, start, end)
+                ]
+                uninstalls = [
+                    e
+                    for e in all_events
+                    if e.get("type") == "RELATIONSHIP_UNINSTALLED"
+                    and _event_in_period(e, start, end)
+                ]
 
-                revenue = compute_revenue_summary(txns, start, end)
+                revenue = compute_revenue_summary(
+                    all_txns, start, end, events=all_events
+                )
 
                 comparison.append(
                     {
@@ -1111,14 +1140,23 @@ async def get_revenue_forecast(
     try:
         sp = _get_sp(ctx)
 
-        start = date.today() - timedelta(days=210)
-        txns = await sp.get_transactions(
-            app_id=app_id,
-            created_at_min=f"{start}T00:00:00Z",
-            limit=2000,
-        )
+        events = None
+        if app_id:
+            events = await sp.get_app_events(app_id, limit=500)
+            txns = await sp.get_transactions(
+                app_id=app_id, limit=2000
+            )
+        else:
+            start = date.today() - timedelta(days=210)
+            txns = await sp.get_transactions(
+                app_id=app_id,
+                created_at_min=f"{start}T00:00:00Z",
+                limit=2000,
+            )
 
-        result = compute_revenue_forecast(txns, forecast_months)
+        result = compute_revenue_forecast(
+            txns, forecast_months, events=events
+        )
         return json.dumps(result, indent=2)
     except ShopifyPartnerError as e:
         return _error(str(e))

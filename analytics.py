@@ -541,30 +541,51 @@ def compute_revenue_summary(
 def compute_mrr_movement(
     current_transactions: list[dict],
     previous_transactions: list[dict],
+    *,
+    events: list[dict] | None = None,
+    current_period_end: date | None = None,
+    previous_period_end: date | None = None,
 ) -> dict:
     """Compute MRR movement: new, expansion, contraction, churn, reactivation.
 
-    Compares subscription charges between two periods to classify changes.
+    When events are provided with period end dates, uses event-aware
+    active merchant detection and all-time subscription maps. This
+    enables true reactivation detection and Quick Ratio calculation.
+
+    When events are None, falls back to charge-based period comparison.
 
     Args:
-        current_transactions: Transactions from the current period.
-        previous_transactions: Transactions from the previous period.
+        current_transactions: Transactions from the current period
+            (or full history when events provided).
+        previous_transactions: Transactions from the previous period
+            (or full history when events provided).
+        events: App event list for active merchant detection.
+        current_period_end: End date of current period (for as_of).
+        previous_period_end: End date of previous period (for as_of).
 
     Returns:
-        Dict with keys: new_mrr, expansion_mrr, contraction_mrr,
-        churn_mrr, reactivation_mrr, net_new_mrr,
-        current_subscribers, previous_subscribers.
+        Dict with movement breakdown, Quick Ratio, and method used.
     """
+    if events is not None and current_period_end and previous_period_end:
+        return _mrr_movement_event_aware(
+            current_transactions,
+            events,
+            current_period_end,
+            previous_period_end,
+        )
+
+    return _mrr_movement_charge_based(
+        current_transactions, previous_transactions
+    )
+
+
+def _mrr_movement_charge_based(
+    current_transactions: list[dict],
+    previous_transactions: list[dict],
+) -> dict:
+    """Charge-based MRR movement (original behavior)."""
 
     def _subscription_map(txns: list[dict]) -> dict[str, Decimal]:
-        """Map shop domain to monthly subscription amount.
-
-        Args:
-            txns: Transaction list to scan for AppSubscriptionSale.
-
-        Returns:
-            Dict mapping myshopifyDomain to monthly Decimal amount.
-        """
         result: dict[str, Decimal] = {}
         for txn in txns:
             if txn.get("__typename") != "AppSubscriptionSale":
@@ -572,7 +593,9 @@ def compute_mrr_movement(
             shop = txn.get("shop", {}).get("myshopifyDomain", "")
             if not shop:
                 continue
-            amount = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
+            amount = _to_decimal(
+                txn.get("netAmount", {}).get("amount", "0")
+            )
             billing = txn.get("billingInterval", "EVERY_30_DAYS")
             monthly = amount / 12 if billing == "ANNUAL" else amount
             result[shop] = monthly
@@ -587,15 +610,11 @@ def compute_mrr_movement(
     churn_mrr = Decimal("0")
     reactivation_mrr = Decimal("0")
 
-    all_shops = set(curr_map.keys()) | set(prev_map.keys())
-
-    for shop in all_shops:
+    for shop in set(curr_map) | set(prev_map):
         curr_amt = curr_map.get(shop, Decimal("0"))
         prev_amt = prev_map.get(shop, Decimal("0"))
 
         if prev_amt == 0 and curr_amt > 0:
-            # Could be new or reactivation -- we'd need older history
-            # to distinguish. For now, treat as new.
             new_mrr += curr_amt
         elif prev_amt > 0 and curr_amt == 0:
             churn_mrr += prev_amt
@@ -604,17 +623,146 @@ def compute_mrr_movement(
         elif curr_amt < prev_amt:
             contraction_mrr += prev_amt - curr_amt
 
-    net_new = new_mrr + reactivation_mrr + expansion_mrr - contraction_mrr - churn_mrr
+    net_new = (
+        new_mrr + reactivation_mrr + expansion_mrr
+        - contraction_mrr - churn_mrr
+    )
 
     return {
         "new_mrr": str(new_mrr.quantize(Decimal("0.01"))),
         "expansion_mrr": str(expansion_mrr.quantize(Decimal("0.01"))),
-        "contraction_mrr": str(contraction_mrr.quantize(Decimal("0.01"))),
+        "contraction_mrr": str(
+            contraction_mrr.quantize(Decimal("0.01"))
+        ),
         "churn_mrr": str(churn_mrr.quantize(Decimal("0.01"))),
-        "reactivation_mrr": str(reactivation_mrr.quantize(Decimal("0.01"))),
+        "reactivation_mrr": str(
+            reactivation_mrr.quantize(Decimal("0.01"))
+        ),
         "net_new_mrr": str(net_new.quantize(Decimal("0.01"))),
         "current_subscribers": len(curr_map),
         "previous_subscribers": len(prev_map),
+        "mrr_method": "charge_based",
+    }
+
+
+def _mrr_movement_event_aware(
+    transactions: list[dict],
+    events: list[dict],
+    current_period_end: date,
+    previous_period_end: date,
+) -> dict:
+    """Event-aware MRR movement with reactivation and Quick Ratio."""
+    # Subscription maps at each period end
+    curr_subs = _all_time_subscription_map(
+        transactions, as_of=current_period_end
+    )
+    prev_subs = _all_time_subscription_map(
+        transactions, as_of=previous_period_end
+    )
+
+    # Active merchants at each period end
+    curr_active = _active_merchants_from_events(
+        events, as_of=current_period_end
+    )
+    prev_active = _active_merchants_from_events(
+        events, as_of=previous_period_end
+    )
+
+    # Filter to active merchants only
+    curr_map = {
+        s: a for s, a in curr_subs.items() if s in curr_active
+    }
+    prev_map = {
+        s: a for s, a in prev_subs.items() if s in prev_active
+    }
+
+    # Find merchants known before the previous period (for reactivation)
+    all_known_shops: set[str] = set()
+    for e in events:
+        shop = e.get("shop", {}).get("myshopifyDomain", "")
+        date_str = e.get("occurredAt", "")
+        if not shop or not date_str:
+            continue
+        try:
+            evt_date = datetime.fromisoformat(
+                date_str.replace("Z", "+00:00")
+            ).date()
+        except ValueError:
+            continue
+        if evt_date <= previous_period_end:
+            all_known_shops.add(shop)
+
+    new_mrr = Decimal("0")
+    expansion_mrr = Decimal("0")
+    contraction_mrr = Decimal("0")
+    churn_mrr = Decimal("0")
+    reactivation_mrr = Decimal("0")
+
+    for shop in set(curr_map) | set(prev_map):
+        curr_amt = curr_map.get(shop, Decimal("0"))
+        prev_amt = prev_map.get(shop, Decimal("0"))
+
+        if prev_amt == 0 and curr_amt > 0:
+            if shop in all_known_shops:
+                reactivation_mrr += curr_amt
+            else:
+                new_mrr += curr_amt
+        elif prev_amt > 0 and curr_amt == 0:
+            churn_mrr += prev_amt
+        elif curr_amt > prev_amt:
+            expansion_mrr += curr_amt - prev_amt
+        elif curr_amt < prev_amt:
+            contraction_mrr += prev_amt - curr_amt
+
+    net_new = (
+        new_mrr + reactivation_mrr + expansion_mrr
+        - contraction_mrr - churn_mrr
+    )
+
+    # Usage MRR delta
+    curr_usage = _usage_mrr_trailing(
+        transactions, as_of=current_period_end
+    )
+    prev_usage = _usage_mrr_trailing(
+        transactions, as_of=previous_period_end
+    )
+    curr_usage_total = sum(
+        (a for s, a in curr_usage.items() if s in curr_active),
+        Decimal("0"),
+    )
+    prev_usage_total = sum(
+        (a for s, a in prev_usage.items() if s in prev_active),
+        Decimal("0"),
+    )
+    usage_change = curr_usage_total - prev_usage_total
+
+    # Quick Ratio
+    inflow = new_mrr + expansion_mrr + reactivation_mrr
+    outflow = contraction_mrr + churn_mrr
+    quick_ratio = (
+        round(float(inflow / outflow), 2)
+        if outflow > 0
+        else None
+    )
+
+    return {
+        "new_mrr": str(new_mrr.quantize(Decimal("0.01"))),
+        "expansion_mrr": str(expansion_mrr.quantize(Decimal("0.01"))),
+        "contraction_mrr": str(
+            contraction_mrr.quantize(Decimal("0.01"))
+        ),
+        "churn_mrr": str(churn_mrr.quantize(Decimal("0.01"))),
+        "reactivation_mrr": str(
+            reactivation_mrr.quantize(Decimal("0.01"))
+        ),
+        "net_new_mrr": str(net_new.quantize(Decimal("0.01"))),
+        "usage_mrr_change": str(
+            usage_change.quantize(Decimal("0.01"))
+        ),
+        "quick_ratio": quick_ratio,
+        "current_subscribers": len(curr_map),
+        "previous_subscribers": len(prev_map),
+        "mrr_method": "event_aware",
     }
 
 
@@ -1731,51 +1879,75 @@ def compute_business_digest(
 def compute_revenue_forecast(
     transactions: list[dict],
     forecast_months: int = 6,
+    *,
+    events: list[dict] | None = None,
 ) -> dict:
     """Project future MRR based on recent growth and churn trends.
 
-    Uses last 6 months of MRR data to calculate monthly growth rate,
-    then projects forward. Simple linear model -- not ML.
+    When events are provided, uses event-aware MRR snapshots per month
+    so annual merchants and frozen/churned stores are handled correctly.
 
     Args:
         transactions: Subscription transaction history (6+ months).
+            Full history when events provided.
         forecast_months: Number of months to project. Defaults to 6.
+        events: App event list for active merchant detection.
 
     Returns:
         Dict with keys: current_mrr, monthly_growth_rate_pct,
         historical (last 6 months), projections (future months),
         projected_arr_end, model, caveat.
     """
-    # Linear projection -- intentionally simple, caveat included in output
     today = date.today()
 
     # Calculate MRR for each of the last 6 months
     monthly_mrr: list[dict] = []
     for i in range(6, 0, -1):
-        # Walk back i months from today's month start to get exact boundaries
         first_of_current = today.replace(day=1)
         target_month = (first_of_current.month - i - 1) % 12 + 1
-        target_year = first_of_current.year + (first_of_current.month - i - 1) // 12
+        target_year = (
+            first_of_current.year
+            + (first_of_current.month - i - 1) // 12
+        )
         month_start = date(target_year, target_month, 1)
-        # month_end = last day of that month = day before next month's 1st
         next_month = target_month % 12 + 1
         next_year = target_year + (1 if next_month == 1 else 0)
         month_end = date(next_year, next_month, 1) - timedelta(days=1)
 
-        month_txns = _filter_by_date(transactions, month_start, month_end)
-        sub_txns = [
-            t for t in month_txns if t.get("__typename") == "AppSubscriptionSale"
-        ]
-
-        merchants: dict[str, Decimal] = {}
-        for txn in sub_txns:
-            shop = txn.get("shop", {}).get("myshopifyDomain", "")
-            if not shop:
-                continue
-            amount = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
-            billing = txn.get("billingInterval", "EVERY_30_DAYS")
-            monthly = amount / 12 if billing == "ANNUAL" else amount
-            merchants[shop] = monthly
+        if events is not None:
+            # Event-aware: MRR snapshot at end of each month
+            subs = _all_time_subscription_map(
+                transactions, as_of=month_end
+            )
+            active = _active_merchants_from_events(
+                events, as_of=month_end
+            )
+            merchants = {
+                s: a for s, a in subs.items() if s in active
+            }
+        else:
+            # Charge-based: sum subscription charges in the month
+            month_txns = _filter_by_date(
+                transactions, month_start, month_end
+            )
+            sub_txns = [
+                t
+                for t in month_txns
+                if t.get("__typename") == "AppSubscriptionSale"
+            ]
+            merchants: dict[str, Decimal] = {}
+            for txn in sub_txns:
+                shop = txn.get("shop", {}).get("myshopifyDomain", "")
+                if not shop:
+                    continue
+                amount = _to_decimal(
+                    txn.get("netAmount", {}).get("amount", "0")
+                )
+                billing = txn.get("billingInterval", "EVERY_30_DAYS")
+                monthly = (
+                    amount / 12 if billing == "ANNUAL" else amount
+                )
+                merchants[shop] = monthly
 
         mrr = sum(merchants.values(), Decimal("0"))
         monthly_mrr.append(

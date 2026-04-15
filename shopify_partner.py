@@ -161,7 +161,12 @@ class ShopifyPartnerClient:
             # Navigate to the connection object
             connection = data
             for key in path:
+                if not isinstance(connection, dict):
+                    return all_nodes
                 connection = connection.get(key, {})
+
+            if not isinstance(connection, dict):
+                return all_nodes
 
             edges = connection.get("edges", [])
             for edge in edges:

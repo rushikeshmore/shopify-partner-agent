@@ -37,6 +37,7 @@ analytics.py        -- Pure computation functions (MRR, churn, ARPU, cohorts, an
 - Financial amounts are string decimals -- use `Decimal` for math
 - `billingInterval` can be `EVERY_30_DAYS` or `ANNUAL` -- divide annual by 12 for MRR
 - GraphQL can return HTTP 200 with `errors` in body -- check both
+- MRR is event-aware when app_id is provided: uses install/uninstall/freeze events to determine active merchants, then sums their latest subscription amounts. Falls back to charge-based when events=None.
 
 ## Stack
 Python 3.12, FastMCP (mcp>=1.26.0), httpx, python-dotenv

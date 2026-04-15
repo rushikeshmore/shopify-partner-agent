@@ -451,15 +451,21 @@ async def get_revenue_summary(
         start, end = parse_period(period)
         prev_start, _ = previous_period(start, end)
 
-        # Fetch transactions for both periods
-        txns = await sp.get_transactions(
-            app_id=app_id,
-            created_at_min=f"{prev_start}T00:00:00Z",
-            created_at_max=f"{end}T23:59:59Z",
-            limit=1000,
-        )
+        # Event-aware MRR when app_id is provided (events require an app_id)
+        events = None
+        if app_id:
+            events = await sp.get_app_events(app_id, limit=500)
+            # All-time transactions needed to find latest subscription amount
+            txns = await sp.get_transactions(app_id=app_id, limit=2000)
+        else:
+            txns = await sp.get_transactions(
+                app_id=app_id,
+                created_at_min=f"{prev_start}T00:00:00Z",
+                created_at_max=f"{end}T23:59:59Z",
+                limit=1000,
+            )
 
-        result = compute_revenue_summary(txns, start, end)
+        result = compute_revenue_summary(txns, start, end, events=events)
         return json.dumps(result, indent=2)
     except ShopifyPartnerError as e:
         return _error(str(e))
@@ -1005,15 +1011,11 @@ async def get_business_digest(
     try:
         sp = _get_sp(ctx)
         start, end = parse_period(period)
-        prev_start, _ = previous_period(start, end)
 
         events = await sp.get_app_events(app_id, limit=500)
-        txns = await sp.get_transactions(
-            app_id=app_id,
-            created_at_min=f"{prev_start}T00:00:00Z",
-            created_at_max=f"{end}T23:59:59Z",
-            limit=1000,
-        )
+        # All-time transactions: event-aware MRR needs latest subscription
+        # amount per merchant regardless of period
+        txns = await sp.get_transactions(app_id=app_id, limit=2000)
 
         result = compute_business_digest(events, txns, start, end)
         return json.dumps(result, indent=2)

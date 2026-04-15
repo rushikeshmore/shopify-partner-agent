@@ -15,6 +15,8 @@ from decimal import Decimal, InvalidOperation
 from statistics import mean, stdev
 
 __all__ = [
+    "_active_merchants_from_events",
+    "_all_time_subscription_map",
     "compute_business_digest",
     "compute_churn_analysis",
     "compute_churn_risk",
@@ -155,30 +157,166 @@ def _filter_by_date(
 
 
 # =============================================================================
+# Merchant Status Helpers
+# =============================================================================
+
+# Event types that affect merchant active status (Shopify Partner API has 20 total)
+
+_RELATIONSHIP_ACTIVE = frozenset(
+    {
+        "RELATIONSHIP_INSTALLED",
+        "RELATIONSHIP_REACTIVATED",
+    }
+)
+_RELATIONSHIP_INACTIVE = frozenset(
+    {
+        "RELATIONSHIP_UNINSTALLED",
+        "RELATIONSHIP_DEACTIVATED",
+    }
+)
+_SUBSCRIPTION_INACTIVE = frozenset(
+    {
+        "SUBSCRIPTION_CHARGE_CANCELED",
+        "SUBSCRIPTION_CHARGE_EXPIRED",
+        "SUBSCRIPTION_CHARGE_FROZEN",
+    }
+)
+_SUBSCRIPTION_ACTIVE = frozenset(
+    {
+        "SUBSCRIPTION_CHARGE_ACCEPTED",
+        "SUBSCRIPTION_CHARGE_ACTIVATED",
+        "SUBSCRIPTION_CHARGE_UNFROZEN",
+    }
+)
+
+
+def _active_merchants_from_events(events: list[dict]) -> set[str]:
+    """Determine currently active merchants from event history.
+
+    Two-track status model:
+        1. Relationship: is the app installed on the store?
+        2. Subscription: is the subscription generating revenue?
+
+    A merchant is active for MRR if the app is installed AND the
+    subscription has not been explicitly canceled, expired, or frozen.
+
+    Events are replayed chronologically -- last event wins per track.
+    Handles plan upgrades (CANCELED old -> ACCEPTED new = still active),
+    frozen stores (FROZEN without uninstall = excluded), and reinstalls.
+
+    Args:
+        events: App event list from Shopify Partner API.
+
+    Returns:
+        Set of myshopifyDomain strings for currently active merchants.
+    """
+    parsed: list[tuple[date, str, str]] = []
+    for e in events:
+        shop = e.get("shop", {}).get("myshopifyDomain", "")
+        if not shop:
+            continue
+        date_str = e.get("occurredAt", "")
+        if not date_str:
+            continue
+        try:
+            event_date = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
+            parsed.append((event_date, e.get("type", ""), shop))
+        except ValueError:
+            continue
+
+    parsed.sort(key=lambda x: x[0])
+
+    relationship_active: set[str] = set()
+    subscription_killed: set[str] = set()
+
+    for _, event_type, shop in parsed:
+        if event_type in _RELATIONSHIP_ACTIVE:
+            relationship_active.add(shop)
+        elif event_type in _RELATIONSHIP_INACTIVE:
+            relationship_active.discard(shop)
+
+        if event_type in _SUBSCRIPTION_INACTIVE:
+            subscription_killed.add(shop)
+        elif event_type in _SUBSCRIPTION_ACTIVE:
+            subscription_killed.discard(shop)
+
+    return relationship_active - subscription_killed
+
+
+def _all_time_subscription_map(transactions: list[dict]) -> dict[str, Decimal]:
+    """Map each merchant to their latest subscription charge amount (monthly).
+
+    Scans all transactions and takes the most recent AppSubscriptionSale
+    per merchant. Annual billing is divided by 12.
+
+    Args:
+        transactions: Full transaction history from API.
+
+    Returns:
+        Dict mapping myshopifyDomain to monthly Decimal amount.
+    """
+    latest: dict[str, tuple[date, Decimal]] = {}
+    for txn in transactions:
+        if txn.get("__typename") != "AppSubscriptionSale":
+            continue
+        shop = txn.get("shop", {}).get("myshopifyDomain", "")
+        if not shop:
+            continue
+        date_str = txn.get("createdAt", "")
+        if not date_str:
+            continue
+        try:
+            txn_date = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
+        except ValueError:
+            continue
+        amount = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
+        billing = txn.get("billingInterval", "EVERY_30_DAYS")
+        monthly = amount / 12 if billing == "ANNUAL" else amount
+
+        if shop not in latest or txn_date > latest[shop][0]:
+            latest[shop] = (txn_date, monthly)
+
+    return {shop: amount for shop, (_, amount) in latest.items()}
+
+
+# =============================================================================
 # Revenue Analytics
 # =============================================================================
 
-# MRR calculation: only AppSubscriptionSale counts -- usage/one-time are not recurring
+# MRR calculation: event-aware when events provided, charge-based fallback
 
 
 def compute_revenue_summary(
     transactions: list[dict],
     period_start: date,
     period_end: date,
+    *,
+    events: list[dict] | None = None,
 ) -> dict:
     """Compute MRR, ARR, total revenue, growth rate, ARPU, and fees.
 
+    When events are provided, MRR is event-aware: it uses all-time
+    transaction history to find each merchant's latest subscription
+    price, then filters to merchants who are currently active (based
+    on install/uninstall/freeze/cancel events). This correctly handles
+    annual merchants between charges and excludes churned/frozen stores.
+
+    When events are None, falls back to charge-based MRR (sum of
+    subscription charges in the period window). This is less accurate
+    but requires no event data.
+
     Args:
-        transactions: Raw transaction list from API (should include both
-                      current and previous period for growth calculation).
+        transactions: Raw transaction list from API. For event-aware MRR,
+            should include full history (not just the period).
         period_start: Start of the analysis period.
         period_end: End of the analysis period.
+        events: App event list for active merchant detection (optional).
 
     Returns:
         Dict with keys: mrr, arr, total_net_revenue,
         total_gross_revenue, total_shopify_fees, growth_rate_pct,
-        arpu, active_merchants, transaction_count, by_currency,
-        by_app.
+        arpu, active_merchants, mrr_subscribers, mrr_method,
+        transaction_count, by_currency, by_app.
     """
     current = _filter_by_date(transactions, period_start, period_end)
     prev_start, prev_end = previous_period(period_start, period_end)
@@ -197,12 +335,10 @@ def compute_revenue_summary(
     # Group by app
     by_app: dict[str, dict] = defaultdict(lambda: {"net": Decimal("0"), "count": 0})
 
-    # Track unique merchants with subscription charges for MRR
-    subscription_merchants: dict[str, Decimal] = {}
+    # Track merchants seen in period (for total revenue metrics)
     active_merchants: set[str] = set()
 
     for txn in current:
-        typename = txn.get("__typename", "")
         net = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
         gross = _to_decimal(txn.get("grossAmount", {}).get("amount", "0"))
         fee = _to_decimal(txn.get("shopifyFee", {}).get("amount", "0"))
@@ -223,11 +359,29 @@ def compute_revenue_summary(
         if shop:
             active_merchants.add(shop)
 
-        # MRR from subscription charges
-        if typename == "AppSubscriptionSale" and shop:
-            billing = txn.get("billingInterval", "EVERY_30_DAYS")
-            monthly = net / 12 if billing == "ANNUAL" else net
-            subscription_merchants[shop] = monthly
+    # MRR calculation: event-aware or charge-based
+    if events is not None:
+        # Event-aware: latest subscription price x currently active merchants
+        all_subs = _all_time_subscription_map(transactions)
+        currently_active = _active_merchants_from_events(events)
+        subscription_merchants = {
+            shop: amount
+            for shop, amount in all_subs.items()
+            if shop in currently_active
+        }
+        mrr_method = "event_aware"
+    else:
+        # Charge-based fallback: subscription charges in the period window
+        subscription_merchants: dict[str, Decimal] = {}
+        for txn in current:
+            if txn.get("__typename") == "AppSubscriptionSale":
+                shop = txn.get("shop", {}).get("myshopifyDomain", "")
+                if shop:
+                    net_amt = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
+                    billing = txn.get("billingInterval", "EVERY_30_DAYS")
+                    monthly = net_amt / 12 if billing == "ANNUAL" else net_amt
+                    subscription_merchants[shop] = monthly
+        mrr_method = "charge_based"
 
     # Calculate MRR and derived metrics
     mrr = sum(subscription_merchants.values(), Decimal("0"))
@@ -253,6 +407,8 @@ def compute_revenue_summary(
         "total_gross_revenue": str(total_gross.quantize(Decimal("0.01"))),
         "total_shopify_fees": str(total_fees.quantize(Decimal("0.01"))),
         "active_merchants": merchant_count,
+        "mrr_subscribers": len(subscription_merchants),
+        "mrr_method": mrr_method,
         "arpu": str(arpu.quantize(Decimal("0.01"))),
         "transaction_count": len(current),
         "growth_rate_pct": round(growth_pct, 1) if growth_pct is not None else None,
@@ -1389,8 +1545,12 @@ def compute_business_digest(
     )
 
     # Revenue
-    rev_current = compute_revenue_summary(transactions, period_start, period_end)
-    rev_prev = compute_revenue_summary(transactions, prev_start, prev_end)
+    rev_current = compute_revenue_summary(
+        transactions, period_start, period_end, events=events
+    )
+    rev_prev = compute_revenue_summary(
+        transactions, prev_start, prev_end, events=events
+    )
 
     # Highlights
     highlights: list[str] = []

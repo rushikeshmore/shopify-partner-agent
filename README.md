@@ -172,7 +172,7 @@ All formulas match industry-standard SaaS metrics:
 
 | Metric | Formula |
 |--------|---------|
-| MRR | Sum of active monthly subscription charges (annual / 12) |
+| MRR | Event-aware: latest subscription amount per active merchant (annual / 12). Uses install/uninstall/freeze events to determine active status. Falls back to charge-based when events unavailable. |
 | Net New MRR | New + Reactivation + Expansion - Contraction - Churn |
 | Revenue Churn % | (Churned MRR + Contraction) / Starting MRR x 100 |
 | Logo Churn % | Uninstalled merchants / Starting merchants x 100 |

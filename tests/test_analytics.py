@@ -569,15 +569,25 @@ class TestCustomerLtv:
         assert arpu == Decimal("200.00")
 
     def test_no_events_backward_compat(self):
-        """Empty events list should use all merchants for ARPU."""
+        """None events should use all merchants for ARPU (charge-based fallback)."""
+        txns = [
+            _tx(net="100.00", shop="a.myshopify.com", days_ago=5),
+            _tx(net="50.00", shop="b.myshopify.com", days_ago=10),
+        ]
+        result = compute_customer_ltv(txns, None)
+        assert result["arpu_method"] == "all_merchants"
+        # $150 total / 2 merchants = $75
+        assert Decimal(result["arpu"]) == Decimal("75.00")
+
+    def test_empty_events_uses_event_aware_path(self):
+        """Empty events list (not None) uses event-aware branch."""
         txns = [
             _tx(net="100.00", shop="a.myshopify.com", days_ago=5),
             _tx(net="50.00", shop="b.myshopify.com", days_ago=10),
         ]
         result = compute_customer_ltv(txns, [])
-        assert result["arpu_method"] == "all_merchants"
-        # $150 total / 2 merchants = $75
-        assert Decimal(result["arpu"]) == Decimal("75.00")
+        # [] is not None, so event-aware path is used (consistent with codebase)
+        assert result["arpu_method"] == "active_only"
 
 
 # ---- compute_plan_performance ----
@@ -1058,6 +1068,24 @@ class TestAllTimeSubscriptionMap:
         as_of = date.today() - timedelta(days=30)
         result = _all_time_subscription_map(txns, as_of=as_of)
         assert result["a.myshopify.com"] == Decimal("10.00")
+
+    def test_zero_amount_charge_does_not_overwrite(self):
+        """A $0 subscription charge should not overwrite a real charge."""
+        txns = [
+            _tx(net="99.00", shop="a.myshopify.com", days_ago=60, charge_id="c1"),
+            _tx(net="0.00", shop="a.myshopify.com", days_ago=1, charge_id="c2"),
+        ]
+        result = _all_time_subscription_map(txns)
+        # The $99 charge should be preserved, not overwritten by $0
+        assert result["a.myshopify.com"] == Decimal("99.00")
+
+    def test_only_zero_amount_charges_excluded(self):
+        """If a merchant only has $0 charges, they should not appear in the map."""
+        txns = [
+            _tx(net="0.00", shop="a.myshopify.com", days_ago=5, charge_id="c1"),
+        ]
+        result = _all_time_subscription_map(txns)
+        assert result == {}
 
 
 # ---- _usage_mrr_trailing ----

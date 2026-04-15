@@ -292,6 +292,11 @@ def _all_time_subscription_map(
         billing = txn.get("billingInterval", "EVERY_30_DAYS")
         monthly = amount / 12 if billing == "ANNUAL" else amount
 
+        # Skip zero-amount charges (e.g. plan downgrades, trial conversions
+        # with $0 initial charge) so they don't overwrite a real subscription.
+        if monthly <= 0:
+            continue
+
         if shop not in latest or txn_dt > latest[shop][0]:
             latest[shop] = (txn_dt, monthly)
 
@@ -1108,11 +1113,11 @@ def compute_customer_ltv(
     merchant_count = len(merchant_revenue)
 
     # ARPU: use active merchants when events available, all merchants otherwise
-    if events:
+    if events is not None:
         active = _active_merchants_from_events(events)
         active_revenue = {s: r for s, r in merchant_revenue.items() if s in active}
         active_count = len(active_revenue) if active_revenue else 1
-        arpu = sum(active_revenue.values()) / active_count
+        arpu = sum(active_revenue.values(), Decimal("0")) / active_count
         arpu_method = "active_only"
     else:
         arpu = total_revenue / merchant_count if merchant_count > 0 else Decimal("0")

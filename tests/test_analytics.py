@@ -748,6 +748,46 @@ class TestGrowthVelocity:
         result = compute_growth_velocity([], [])
         assert "summary" in result
 
+    def test_multi_currency(self):
+        """Revenue should be grouped by currency code."""
+        events = [
+            _event(
+                "RELATIONSHIP_INSTALLED",
+                "us-store.myshopify.com",
+                days_ago=3,
+            ),
+        ]
+        txns = [
+            _tx(
+                net="100.00",
+                currency="USD",
+                shop="us-store.myshopify.com",
+                days_ago=3,
+            ),
+            _tx(
+                net="80.00",
+                currency="EUR",
+                shop="eu-store.myshopify.com",
+                days_ago=3,
+            ),
+        ]
+        result = compute_growth_velocity(events, txns, weeks=2)
+        # Find week with revenue
+        for week in result["weekly_data"]:
+            if week["revenue"]:
+                assert isinstance(week["revenue"], dict)
+                break
+
+    def test_single_currency(self):
+        """Single currency still works as dict."""
+        events = []
+        txns = [
+            _tx(net="50.00", currency="USD", days_ago=3),
+        ]
+        result = compute_growth_velocity(events, txns, weeks=2)
+        for week in result["weekly_data"]:
+            assert isinstance(week["revenue"], dict)
+
 
 # ---- compute_install_patterns ----
 # Signature: (events) -> dict

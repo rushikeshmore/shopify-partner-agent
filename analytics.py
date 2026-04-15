@@ -2135,13 +2135,22 @@ def compute_growth_velocity(
             date_field="occurredAt",
         )
         week_txns = _filter_by_date(transactions, week_start, week_end)
-        revenue = sum(
-            (
-                float(_to_decimal(t.get("netAmount", {}).get("amount", "0")))
-                for t in week_txns
-            ),
-            0.0,
-        )
+        revenue_by_currency: dict[str, float] = defaultdict(float)
+        for t in week_txns:
+            currency = t.get("netAmount", {}).get(
+                "currencyCode", "USD"
+            )
+            amount = float(
+                _to_decimal(
+                    t.get("netAmount", {}).get("amount", "0")
+                )
+            )
+            revenue_by_currency[currency] += amount
+
+        # Round each currency total
+        revenue_by_currency = {
+            k: round(v, 2) for k, v in revenue_by_currency.items()
+        }
 
         weekly_data.append(
             {
@@ -2149,11 +2158,11 @@ def compute_growth_velocity(
                 "installs": len(installs),
                 "uninstalls": len(uninstalls),
                 "net_growth": len(installs) - len(uninstalls),
-                "revenue": round(revenue, 2),
+                "revenue": dict(revenue_by_currency),
             }
         )
 
-    # Calculate velocity (rate of change)
+    # Calculate velocity (rate of change) using total across currencies
     install_velocities: list[float] = []
     revenue_velocities: list[float] = []
     for i in range(1, len(weekly_data)):
@@ -2164,10 +2173,12 @@ def compute_growth_velocity(
                 (curr_installs - prev_installs) / prev_installs * 100
             )
 
-        prev_rev = weekly_data[i - 1]["revenue"]
-        curr_rev = weekly_data[i]["revenue"]
+        prev_rev = sum(weekly_data[i - 1]["revenue"].values())
+        curr_rev = sum(weekly_data[i]["revenue"].values())
         if prev_rev > 0:
-            revenue_velocities.append((curr_rev - prev_rev) / prev_rev * 100)
+            revenue_velocities.append(
+                (curr_rev - prev_rev) / prev_rev * 100
+            )
 
     # Acceleration (is velocity increasing or decreasing?)
     install_acceleration = "stable"

@@ -190,7 +190,11 @@ _SUBSCRIPTION_ACTIVE = frozenset(
 )
 
 
-def _active_merchants_from_events(events: list[dict]) -> set[str]:
+def _active_merchants_from_events(
+    events: list[dict],
+    *,
+    as_of: date | None = None,
+) -> set[str]:
     """Determine currently active merchants from event history.
 
     Two-track status model:
@@ -206,6 +210,8 @@ def _active_merchants_from_events(events: list[dict]) -> set[str]:
 
     Args:
         events: App event list from Shopify Partner API.
+        as_of: Only consider events up to this date (inclusive).
+            None means consider all events (current state).
 
     Returns:
         Set of myshopifyDomain strings for currently active merchants.
@@ -220,9 +226,11 @@ def _active_merchants_from_events(events: list[dict]) -> set[str]:
             continue
         try:
             event_dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-            parsed.append((event_dt, e.get("type", ""), shop))
         except ValueError:
             continue
+        if as_of is not None and event_dt.date() > as_of:
+            continue
+        parsed.append((event_dt, e.get("type", ""), shop))
 
     # Sort by full datetime -- .date() loses intra-day ordering,
     # and the API returns events reverse-chronologically
@@ -245,7 +253,11 @@ def _active_merchants_from_events(events: list[dict]) -> set[str]:
     return relationship_active - subscription_killed
 
 
-def _all_time_subscription_map(transactions: list[dict]) -> dict[str, Decimal]:
+def _all_time_subscription_map(
+    transactions: list[dict],
+    *,
+    as_of: date | None = None,
+) -> dict[str, Decimal]:
     """Map each merchant to their latest subscription charge amount (monthly).
 
     Scans all transactions and takes the most recent AppSubscriptionSale
@@ -253,11 +265,13 @@ def _all_time_subscription_map(transactions: list[dict]) -> dict[str, Decimal]:
 
     Args:
         transactions: Full transaction history from API.
+        as_of: Only consider transactions up to this date (inclusive).
+            None means consider all transactions.
 
     Returns:
         Dict mapping myshopifyDomain to monthly Decimal amount.
     """
-    latest: dict[str, tuple[date, Decimal]] = {}
+    latest: dict[str, tuple[datetime, Decimal]] = {}
     for txn in transactions:
         if txn.get("__typename") != "AppSubscriptionSale":
             continue
@@ -268,15 +282,17 @@ def _all_time_subscription_map(transactions: list[dict]) -> dict[str, Decimal]:
         if not date_str:
             continue
         try:
-            txn_date = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
+            txn_dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
         except ValueError:
+            continue
+        if as_of is not None and txn_dt.date() > as_of:
             continue
         amount = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
         billing = txn.get("billingInterval", "EVERY_30_DAYS")
         monthly = amount / 12 if billing == "ANNUAL" else amount
 
-        if shop not in latest or txn_date > latest[shop][0]:
-            latest[shop] = (txn_date, monthly)
+        if shop not in latest or txn_dt > latest[shop][0]:
+            latest[shop] = (txn_dt, monthly)
 
     return {shop: amount for shop, (_, amount) in latest.items()}
 
@@ -363,9 +379,9 @@ def compute_revenue_summary(
 
     # MRR calculation: event-aware or charge-based
     if events is not None:
-        # Event-aware: latest subscription price x currently active merchants
-        all_subs = _all_time_subscription_map(transactions)
-        currently_active = _active_merchants_from_events(events)
+        # Event-aware: state as of period_end so period comparison works
+        all_subs = _all_time_subscription_map(transactions, as_of=period_end)
+        currently_active = _active_merchants_from_events(events, as_of=period_end)
         subscription_merchants = {
             shop: amount
             for shop, amount in all_subs.items()

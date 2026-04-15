@@ -17,6 +17,7 @@ from statistics import mean, stdev
 __all__ = [
     "_active_merchants_from_events",
     "_all_time_subscription_map",
+    "_usage_mrr_trailing",
     "compute_business_digest",
     "compute_churn_analysis",
     "compute_churn_risk",
@@ -297,6 +298,54 @@ def _all_time_subscription_map(
     return {shop: amount for shop, (_, amount) in latest.items()}
 
 
+def _usage_mrr_trailing(
+    transactions: list[dict],
+    *,
+    as_of: date | None = None,
+    window_days: int = 30,
+) -> dict[str, Decimal]:
+    """Sum AppUsageSale charges per merchant in a trailing window.
+
+    Usage charges are irregular, so the trailing 30-day total serves
+    as the monthly run rate.
+
+    Args:
+        transactions: Full transaction history from API.
+        as_of: End date of the trailing window (inclusive).
+            None means today.
+        window_days: Size of the trailing window in days.
+
+    Returns:
+        Dict mapping myshopifyDomain to trailing usage Decimal.
+    """
+    cutoff_end = as_of or date.today()
+    cutoff_start = cutoff_end - timedelta(days=window_days)
+
+    result: dict[str, Decimal] = defaultdict(Decimal)
+    for txn in transactions:
+        if txn.get("__typename") != "AppUsageSale":
+            continue
+        shop = txn.get("shop", {}).get("myshopifyDomain", "")
+        if not shop:
+            continue
+        date_str = txn.get("createdAt", "")
+        if not date_str:
+            continue
+        try:
+            txn_date = datetime.fromisoformat(
+                date_str.replace("Z", "+00:00")
+            ).date()
+        except ValueError:
+            continue
+        if cutoff_start <= txn_date <= cutoff_end:
+            amount = _to_decimal(
+                txn.get("netAmount", {}).get("amount", "0")
+            )
+            result[shop] += amount
+
+    return dict(result)
+
+
 # =============================================================================
 # Revenue Analytics
 # =============================================================================
@@ -401,35 +450,74 @@ def compute_revenue_summary(
                     subscription_merchants[shop] = monthly
         mrr_method = "charge_based"
 
+    # Usage MRR: trailing AppUsageSale per active merchant
+    usage_merchants: dict[str, Decimal] = {}
+    if events is not None:
+        usage_all = _usage_mrr_trailing(
+            transactions, as_of=period_end
+        )
+        usage_merchants = {
+            s: a
+            for s, a in usage_all.items()
+            if s in currently_active
+        }
+
     # Calculate MRR and derived metrics
-    mrr = sum(subscription_merchants.values(), Decimal("0"))
+    subscription_mrr = sum(
+        subscription_merchants.values(), Decimal("0")
+    )
+    usage_mrr = sum(usage_merchants.values(), Decimal("0"))
+    mrr = subscription_mrr + usage_mrr
     arr = mrr * 12
-    total_net = sum((c["net"] for c in by_currency.values()), Decimal("0"))
-    total_gross = sum((c["gross"] for c in by_currency.values()), Decimal("0"))
-    total_fees = sum((c["fees"] for c in by_currency.values()), Decimal("0"))
+    total_net = sum(
+        (c["net"] for c in by_currency.values()), Decimal("0")
+    )
+    total_gross = sum(
+        (c["gross"] for c in by_currency.values()), Decimal("0")
+    )
+    total_fees = sum(
+        (c["fees"] for c in by_currency.values()), Decimal("0")
+    )
     merchant_count = len(active_merchants)
-    arpu = total_net / merchant_count if merchant_count > 0 else Decimal("0")
+    arpu = (
+        total_net / merchant_count
+        if merchant_count > 0
+        else Decimal("0")
+    )
 
     # Growth rate
     prev_total = sum(
-        _to_decimal(t.get("netAmount", {}).get("amount", "0")) for t in prev
+        _to_decimal(t.get("netAmount", {}).get("amount", "0"))
+        for t in prev
     )
     growth_pct = (
-        float((total_net - prev_total) / prev_total * 100) if prev_total > 0 else None
+        float((total_net - prev_total) / prev_total * 100)
+        if prev_total > 0
+        else None
     )
 
     return {
         "mrr": str(mrr.quantize(Decimal("0.01"))),
+        "subscription_mrr": str(
+            subscription_mrr.quantize(Decimal("0.01"))
+        ),
+        "usage_mrr": str(usage_mrr.quantize(Decimal("0.01"))),
         "arr": str(arr.quantize(Decimal("0.01"))),
         "total_net_revenue": str(total_net.quantize(Decimal("0.01"))),
-        "total_gross_revenue": str(total_gross.quantize(Decimal("0.01"))),
-        "total_shopify_fees": str(total_fees.quantize(Decimal("0.01"))),
+        "total_gross_revenue": str(
+            total_gross.quantize(Decimal("0.01"))
+        ),
+        "total_shopify_fees": str(
+            total_fees.quantize(Decimal("0.01"))
+        ),
         "active_merchants": merchant_count,
         "mrr_subscribers": len(subscription_merchants),
         "mrr_method": mrr_method,
         "arpu": str(arpu.quantize(Decimal("0.01"))),
         "transaction_count": len(current),
-        "growth_rate_pct": round(growth_pct, 1) if growth_pct is not None else None,
+        "growth_rate_pct": (
+            round(growth_pct, 1) if growth_pct is not None else None
+        ),
         "period": f"{period_start} to {period_end}",
         "by_currency": {
             k: {

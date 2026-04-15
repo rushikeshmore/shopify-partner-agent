@@ -8,6 +8,7 @@ from analytics import (
     _all_time_subscription_map,
     _filter_by_date,
     _to_decimal,
+    _usage_mrr_trailing,
     compute_churn_analysis,
     compute_churn_risk,
     compute_credits_adjustments,
@@ -777,6 +778,123 @@ class TestAllTimeSubscriptionMap:
         as_of = date.today() - timedelta(days=30)
         result = _all_time_subscription_map(txns, as_of=as_of)
         assert result["a.myshopify.com"] == Decimal("10.00")
+
+
+# ---- _usage_mrr_trailing ----
+
+
+class TestUsageMrrTrailing:
+    def test_basic_sum(self):
+        """Sums AppUsageSale charges per merchant."""
+        txns = [
+            _tx(
+                type_name="AppUsageSale",
+                net="5.00",
+                shop="a.myshopify.com",
+                days_ago=3,
+            ),
+            _tx(
+                type_name="AppUsageSale",
+                net="3.00",
+                shop="a.myshopify.com",
+                days_ago=10,
+            ),
+            _tx(
+                type_name="AppUsageSale",
+                net="7.00",
+                shop="b.myshopify.com",
+                days_ago=5,
+            ),
+        ]
+        result = _usage_mrr_trailing(txns)
+        assert result["a.myshopify.com"] == Decimal("8.00")
+        assert result["b.myshopify.com"] == Decimal("7.00")
+
+    def test_window_excludes_old_charges(self):
+        """Charges outside the 30-day window are excluded."""
+        txns = [
+            _tx(
+                type_name="AppUsageSale",
+                net="10.00",
+                shop="a.myshopify.com",
+                days_ago=5,
+            ),
+            _tx(
+                type_name="AppUsageSale",
+                net="20.00",
+                shop="a.myshopify.com",
+                days_ago=45,
+            ),
+        ]
+        result = _usage_mrr_trailing(txns)
+        assert result["a.myshopify.com"] == Decimal("10.00")
+
+    def test_as_of_date(self):
+        """as_of shifts the trailing window."""
+        txns = [
+            _tx(
+                type_name="AppUsageSale",
+                net="10.00",
+                shop="a.myshopify.com",
+                days_ago=5,
+            ),
+            _tx(
+                type_name="AppUsageSale",
+                net="20.00",
+                shop="a.myshopify.com",
+                days_ago=40,
+            ),
+        ]
+        as_of = date.today() - timedelta(days=35)
+        result = _usage_mrr_trailing(txns, as_of=as_of)
+        # Only the 40-days-ago charge falls in [as_of-30, as_of]
+        assert result["a.myshopify.com"] == Decimal("20.00")
+        assert "a.myshopify.com" in result
+
+    def test_ignores_subscription_sales(self):
+        """Only AppUsageSale is counted."""
+        txns = [
+            _tx(net="50.00", shop="a.myshopify.com", days_ago=5),
+        ]
+        result = _usage_mrr_trailing(txns)
+        assert result == {}
+
+
+class TestRevenueSummaryUsageMrr:
+    def test_mrr_includes_usage(self):
+        """MRR = subscription + usage when events provided."""
+        events = [
+            _event(
+                "RELATIONSHIP_INSTALLED",
+                "a.myshopify.com",
+                days_ago=60,
+            ),
+            _event(
+                "SUBSCRIPTION_CHARGE_ACCEPTED",
+                "a.myshopify.com",
+                days_ago=59,
+            ),
+        ]
+        txns = [
+            _tx(
+                net="30.00",
+                shop="a.myshopify.com",
+                days_ago=10,
+                charge_id="c1",
+            ),
+            _tx(
+                type_name="AppUsageSale",
+                net="5.00",
+                shop="a.myshopify.com",
+                days_ago=8,
+            ),
+        ]
+        result = compute_revenue_summary(
+            txns, *parse_period("30d"), events=events
+        )
+        assert result["subscription_mrr"] == "30.00"
+        assert result["usage_mrr"] == "5.00"
+        assert result["mrr"] == "35.00"
 
 
 # ---- Event-aware MRR in compute_revenue_summary ----

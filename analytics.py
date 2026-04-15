@@ -942,7 +942,17 @@ def compute_customer_ltv(
     avg_lifespan = mean(lifespans) if lifespans else 1.0
     total_revenue = sum(merchant_revenue.values())
     merchant_count = len(merchant_revenue)
-    arpu = total_revenue / merchant_count if merchant_count > 0 else Decimal("0")
+
+    # ARPU: use active merchants when events available, all merchants otherwise
+    if events:
+        active = _active_merchants_from_events(events)
+        active_revenue = {s: r for s, r in merchant_revenue.items() if s in active}
+        active_count = len(active_revenue) if active_revenue else 1
+        arpu = sum(active_revenue.values()) / active_count
+        arpu_method = "active_only"
+    else:
+        arpu = total_revenue / merchant_count if merchant_count > 0 else Decimal("0")
+        arpu_method = "all_merchants"
 
     # Simple LTV = ARPU x average lifespan
     ltv = arpu * Decimal(str(avg_lifespan))
@@ -963,6 +973,7 @@ def compute_customer_ltv(
     return {
         "ltv": str(ltv.quantize(Decimal("0.01"))),
         "arpu": str(arpu.quantize(Decimal("0.01"))),
+        "arpu_method": arpu_method,
         "avg_lifespan_months": round(avg_lifespan, 1),
         "total_merchants": merchant_count,
         "total_revenue": str(total_revenue.quantize(Decimal("0.01"))),
@@ -1228,20 +1239,8 @@ def compute_churn_risk(
         amount = float(_to_decimal(txn.get("netAmount", {}).get("amount", "0")))
         merchant_charges[shop].append({"date": txn_date, "amount": amount})
 
-    # Find currently active merchants (installed, not uninstalled)
-    installed: set[str] = set()
-    uninstalled: set[str] = set()
-    for shop, evts in merchant_events.items():
-        sorted_evts = sorted(evts, key=lambda x: x["date"])
-        for evt in sorted_evts:
-            if evt["type"] == "RELATIONSHIP_INSTALLED":
-                installed.add(shop)
-                uninstalled.discard(shop)
-            elif evt["type"] == "RELATIONSHIP_UNINSTALLED":
-                uninstalled.add(shop)
-                installed.discard(shop)
-
-    active_merchants = installed - uninstalled
+    # Find currently active merchants using full two-track status model
+    active_merchants = _active_merchants_from_events(events)
 
     # Score each active merchant
     risk_results = []
@@ -1409,18 +1408,8 @@ def compute_merchant_health(
             except ValueError:
                 continue
 
-    # Find active merchants
-    installed: set[str] = set()
-    uninstalled: set[str] = set()
-    for shop, counts in merchant_event_counts.items():
-        installed_n = counts.get("RELATIONSHIP_INSTALLED", 0)
-        uninstalled_n = counts.get("RELATIONSHIP_UNINSTALLED", 0)
-        if installed_n > uninstalled_n:
-            installed.add(shop)
-        else:
-            uninstalled.add(shop)
-
-    active = installed - uninstalled
+    # Find active merchants using full two-track status model
+    active = _active_merchants_from_events(events)
     results = []
 
     for shop in active:

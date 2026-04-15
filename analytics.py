@@ -337,7 +337,8 @@ def _usage_mrr_trailing(
             continue
         if cutoff_start <= txn_date <= cutoff_end:
             amount = _to_decimal(txn.get("netAmount", {}).get("amount", "0"))
-            result[shop] += amount
+            if amount > 0:
+                result[shop] += amount
 
     return dict(result)
 
@@ -597,6 +598,8 @@ def _mrr_movement_charge_based(
         "net_new_mrr": str(net_new.quantize(Decimal("0.01"))),
         "current_subscribers": len(curr_map),
         "previous_subscribers": len(prev_map),
+        "usage_mrr_change": "0.00",
+        "quick_ratio": None,
         "mrr_method": "charge_based",
     }
 

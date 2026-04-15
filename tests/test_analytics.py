@@ -471,7 +471,8 @@ class TestMrrMovement:
         result = compute_mrr_movement(current, [])
         assert result["mrr_method"] == "charge_based"
         assert float(result["new_mrr"]) == 50.0
-        assert "quick_ratio" not in result
+        assert result["quick_ratio"] is None
+        assert result["usage_mrr_change"] == "0.00"
 
 
 # ---- compute_payout_summary ----
@@ -865,9 +866,7 @@ class TestRevenueForecast:
                 charge_id="c1",
             ),
         ]
-        result = compute_revenue_forecast(
-            txns, forecast_months=3, events=events
-        )
+        result = compute_revenue_forecast(txns, forecast_months=3, events=events)
         # Every historical month should see $10 MRR
         for month in result["historical"]:
             if month["mrr"] > 0:
@@ -970,20 +969,28 @@ class TestActiveMerchantsFromEvents:
         # Delivered in reverse order (newest first)
         events = [
             _event(
-                "SUBSCRIPTION_CHARGE_CANCELED", "a.myshopify.com",
-                days_ago=5, time="01:41:06",
+                "SUBSCRIPTION_CHARGE_CANCELED",
+                "a.myshopify.com",
+                days_ago=5,
+                time="01:41:06",
             ),
             _event(
-                "RELATIONSHIP_UNINSTALLED", "a.myshopify.com",
-                days_ago=5, time="01:41:06",
+                "RELATIONSHIP_UNINSTALLED",
+                "a.myshopify.com",
+                days_ago=5,
+                time="01:41:06",
             ),
             _event(
-                "SUBSCRIPTION_CHARGE_ACTIVATED", "a.myshopify.com",
-                days_ago=5, time="01:37:38",
+                "SUBSCRIPTION_CHARGE_ACTIVATED",
+                "a.myshopify.com",
+                days_ago=5,
+                time="01:37:38",
             ),
             _event(
-                "RELATIONSHIP_INSTALLED", "a.myshopify.com",
-                days_ago=5, time="01:37:01",
+                "RELATIONSHIP_INSTALLED",
+                "a.myshopify.com",
+                days_ago=5,
+                time="01:37:01",
             ),
         ]
         # Must be inactive (uninstalled + canceled after install)
@@ -997,9 +1004,7 @@ class TestActiveMerchantsFromEvents:
         ]
         # As of 10 days ago: uninstall hasn't happened yet
         as_of = date.today() - timedelta(days=10)
-        assert _active_merchants_from_events(events, as_of=as_of) == {
-            "a.myshopify.com"
-        }
+        assert _active_merchants_from_events(events, as_of=as_of) == {"a.myshopify.com"}
         # As of today: uninstall has happened
         assert _active_merchants_from_events(events, as_of=date.today()) == set()
 
@@ -1164,9 +1169,7 @@ class TestRevenueSummaryUsageMrr:
                 days_ago=8,
             ),
         ]
-        result = compute_revenue_summary(
-            txns, *parse_period("30d"), events=events
-        )
+        result = compute_revenue_summary(txns, *parse_period("30d"), events=events)
         assert result["subscription_mrr"] == "30.00"
         assert result["usage_mrr"] == "5.00"
         assert result["mrr"] == "35.00"

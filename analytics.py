@@ -210,7 +210,7 @@ def _active_merchants_from_events(events: list[dict]) -> set[str]:
     Returns:
         Set of myshopifyDomain strings for currently active merchants.
     """
-    parsed: list[tuple[date, str, str]] = []
+    parsed: list[tuple[datetime, str, str]] = []
     for e in events:
         shop = e.get("shop", {}).get("myshopifyDomain", "")
         if not shop:
@@ -219,11 +219,13 @@ def _active_merchants_from_events(events: list[dict]) -> set[str]:
         if not date_str:
             continue
         try:
-            event_date = datetime.fromisoformat(date_str.replace("Z", "+00:00")).date()
-            parsed.append((event_date, e.get("type", ""), shop))
+            event_dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            parsed.append((event_dt, e.get("type", ""), shop))
         except ValueError:
             continue
 
+    # Sort by full datetime -- .date() loses intra-day ordering,
+    # and the API returns events reverse-chronologically
     parsed.sort(key=lambda x: x[0])
 
     relationship_active: set[str] = set()

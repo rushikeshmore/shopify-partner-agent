@@ -15,7 +15,7 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
-from queries import QUERY_APP_DETAILS, QUERY_APP_EVENTS, QUERY_TRANSACTIONS
+from .queries import QUERY_APP_DETAILS, QUERY_APP_EVENTS, QUERY_TRANSACTIONS
 
 __all__ = ["ShopifyPartnerClient", "ShopifyPartnerError", "create_client"]
 

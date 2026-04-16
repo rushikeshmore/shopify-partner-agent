@@ -3,7 +3,7 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
-from analytics import (
+from shopify_partner_agent.analytics import (
     _active_merchants_from_events,
     _all_time_subscription_map,
     _filter_by_date,

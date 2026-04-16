@@ -20,7 +20,7 @@ from datetime import date, datetime, timedelta
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from analytics import (
+from .analytics import (
     compute_business_digest,
     compute_churn_analysis,
     compute_churn_risk,
@@ -42,7 +42,7 @@ from analytics import (
     parse_period,
     previous_period,
 )
-from shopify_partner import ShopifyPartnerClient, ShopifyPartnerError, create_client
+from .client import ShopifyPartnerClient, ShopifyPartnerError, create_client
 
 # stdio transport: all logging must go to stderr, never stdout
 logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
@@ -1280,6 +1280,11 @@ async def get_credits_adjustments(
         return _error(str(e))
 
 
+def main() -> None:
+    """Entry point for the `shopify-partner-agent` console script."""
+    mcp.run(transport="stdio")
+
+
 # stdio transport -- MCP clients (Claude Code, Cursor, etc.) connect via stdin/stdout
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    main()

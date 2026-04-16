@@ -1,9 +1,37 @@
 [project]
 name = "shopify-partner-agent"
-version = "0.3.0"
-description = "MCP server for Shopify Partner API analytics"
-requires-python = ">=3.12"
+version = "0.4.0"
+description = "MCP server that gives AI tools Partner API access: MRR, churn, retention cohorts, merchant health, and 20+ computed analytics for Shopify app developers."
+readme = "README.md"
 license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Rushikesh More" }]
+keywords = [
+    "mcp",
+    "shopify",
+    "shopify-partner",
+    "partner-api",
+    "mrr",
+    "churn",
+    "analytics",
+    "revenue",
+    "llm",
+    "claude",
+    "anthropic",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Internet :: WWW/HTTP",
+]
+
 dependencies = [
     "mcp>=1.26.0",
     "httpx>=0.27.0",
@@ -11,38 +39,68 @@ dependencies = [
 ]
 
 [project.scripts]
-shopify-partner-agent = "server:mcp.run"
+shopify-partner-agent = "shopify_partner_agent.server:main"
+
+[project.urls]
+Homepage = "https://shopify-partner-agent.vercel.app"
+Repository = "https://github.com/rushikeshmore/shopify-partner-agent"
+Issues = "https://github.com/rushikeshmore/shopify-partner-agent/issues"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/shopify_partner_agent"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/shopify_partner_agent",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+exclude = [
+    "**/.env",
+    "**/.env.*",
+    "**/__pycache__",
+    "**/*.pyc",
+    "tests/",
+    "site/",
+    "mcp-directory-submission.md",
+    ".github/",
+    "CLAUDE.md",
+    "phase-tracker.md",
+    "build-sop/",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py312"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = [
-    "E",    # pycodestyle errors
-    "W",    # pycodestyle warnings
-    "F",    # pyflakes
-    "I",    # isort
-    "D",    # pydocstyle
-    "UP",   # pyupgrade
-    "B",    # bugbear
-    "SIM",  # simplify
-    "RUF",  # ruff-specific
+    "E",
+    "W",
+    "F",
+    "I",
+    "D",
+    "UP",
+    "B",
+    "SIM",
+    "RUF",
 ]
 ignore = [
-    "D100",  # module docstring (already have these)
-    "D104",  # package docstring
-    "D203",  # no-blank-line-before-class (conflicts with D211)
-    "D212",  # multi-line-summary-first-line (we use next-line style)
-    "D213",  # multi-line-summary-second-line (conflicts with D212)
-    "D417",  # missing arg description for ctx (MCP framework param)
+    "D100",
+    "D104",
+    "D203",
+    "D212",
+    "D213",
+    "D417",
 ]
 
 [tool.ruff.lint.pydocstyle]
@@ -52,7 +110,13 @@ convention = "google"
 "tests/**" = ["D"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.4.0",
+]

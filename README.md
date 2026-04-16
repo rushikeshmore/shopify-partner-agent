@@ -1,8 +1,9 @@
 # Shopify Partner Agent
 
+[![PyPI](https://img.shields.io/pypi/v/shopify-partner-agent.svg)](https://pypi.org/project/shopify-partner-agent/)
 [![CI](https://github.com/rushikeshmore/shopify-partner-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/rushikeshmore/shopify-partner-agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.12+](https://img.shields.io/badge/Python-3.12+-3776ab.svg)](https://python.org)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776ab.svg)](https://python.org)
 [![MCP Tools: 25](https://img.shields.io/badge/MCP_Tools-25-96bf48.svg)](#tools)
 
 Free, open-source MCP server that connects Claude to the Shopify Partner API. 25 tools for revenue analytics, churn analysis, retention cohorts, merchant health scoring, conversion funnels, revenue forecasting, and growth velocity.
@@ -76,7 +77,7 @@ Ask Claude things like:
 | `get_revenue_anomalies` | Detect unusual revenue patterns using statistical deviation |
 | `get_app_comparison` | Side-by-side metrics (revenue, installs, churn, ARPU) across all apps |
 
-## Setup
+## Install
 
 ### 1. Get Partner API credentials
 
@@ -84,46 +85,14 @@ Ask Claude things like:
 2. Click "Create API client"
 3. Grant permissions: **Manage apps** + **View financials**
 4. Copy the access token
+5. Grab your app GIDs: Partners Dashboard > Apps > click app > ID is in the URL
 
-### 2. Clone and install
+### 2. Add to your MCP client
 
-```bash
-git clone https://github.com/rushikeshmore/shopify-partner-agent.git
-cd shopify-partner-agent
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+No clone, no venv -- `uvx` installs and runs in one step.
 
-### 3. Configure
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`:
-```
-SHOPIFY_ORG_ID=your_org_id          # From URL: partners.shopify.com/{org_id}
-SHOPIFY_ACCESS_TOKEN=your_token     # From step 1
-SHOPIFY_APP_IDS=gid://partners/App/1234567  # Comma-separated app GIDs
-```
-
-Find your app GIDs: Partners Dashboard > Apps > click app > ID is in the URL.
-
-### 4. Register with your MCP client
-
-<details>
-<summary>Claude Code</summary>
-
-```bash
-claude mcp add shopify-partner-agent \
-  /path/to/shopify-partner-agent/.venv/bin/python \
-  /path/to/shopify-partner-agent/server.py
-```
-</details>
-
-<details>
-<summary>Claude Desktop</summary>
+<details open>
+<summary><b>Claude Desktop</b></summary>
 
 Add to `claude_desktop_config.json`:
 
@@ -131,8 +100,13 @@ Add to `claude_desktop_config.json`:
 {
   "mcpServers": {
     "shopify-partner-agent": {
-      "command": "/path/to/shopify-partner-agent/.venv/bin/python",
-      "args": ["/path/to/shopify-partner-agent/server.py"]
+      "command": "uvx",
+      "args": ["shopify-partner-agent"],
+      "env": {
+        "SHOPIFY_ORG_ID": "your_org_id",
+        "SHOPIFY_ACCESS_TOKEN": "your_token",
+        "SHOPIFY_APP_IDS": "gid://partners/App/1234567"
+      }
     }
   }
 }
@@ -140,23 +114,47 @@ Add to `claude_desktop_config.json`:
 </details>
 
 <details>
-<summary>Cursor / Windsurf</summary>
+<summary><b>Claude Code</b></summary>
 
-Add to your MCP config:
+```bash
+claude mcp add shopify-partner-agent uvx shopify-partner-agent \
+  -e SHOPIFY_ORG_ID=your_org_id \
+  -e SHOPIFY_ACCESS_TOKEN=your_token \
+  -e SHOPIFY_APP_IDS=gid://partners/App/1234567
+```
+</details>
+
+<details>
+<summary><b>Cursor / Windsurf</b></summary>
 
 ```json
 {
   "mcpServers": {
     "shopify-partner-agent": {
-      "command": "/path/to/shopify-partner-agent/.venv/bin/python",
-      "args": ["/path/to/shopify-partner-agent/server.py"]
+      "command": "uvx",
+      "args": ["shopify-partner-agent"],
+      "env": {
+        "SHOPIFY_ORG_ID": "your_org_id",
+        "SHOPIFY_ACCESS_TOKEN": "your_token",
+        "SHOPIFY_APP_IDS": "gid://partners/App/1234567"
+      }
     }
   }
 }
 ```
 </details>
 
-### 5. Start using it
+<details>
+<summary><b>pip install (alternative)</b></summary>
+
+```bash
+pip install shopify-partner-agent
+```
+
+Then point your MCP config at the installed command, or run `shopify-partner-agent` directly.
+</details>
+
+### 3. Start using it
 
 ```
 > Show me my Shopify apps
@@ -187,7 +185,7 @@ All formulas match industry-standard SaaS metrics:
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.11+
 - Shopify Partner account with API access
 - Any MCP-compatible client (Claude Code, Claude Desktop, Cursor, Windsurf)
 

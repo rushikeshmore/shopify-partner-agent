@@ -4,8 +4,8 @@ Shopify Partner Agent -- MCP Server.
 25 tools that give Claude full access to Shopify Partner analytics.
 Query your Shopify app business in natural language.
 
-Run via Claude Code:
-    claude mcp add shopify-partner-agent /path/to/.venv/bin/python /path/to/server.py
+Installed entry point:
+    shopify-partner-agent  (via `pip install shopify-partner-agent` or `uvx`)
 """
 
 from __future__ import annotations

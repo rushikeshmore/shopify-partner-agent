@@ -1293,7 +1293,11 @@ def main() -> None:
             file=sys.stderr,
         )
         print(
-            "Set them in your MCP client config (e.g. claude_desktop_config.json) or your shell.\n"
+            "Set them in your MCP client config (e.g. claude_desktop_config.json)"
+            " or your shell.",
+            file=sys.stderr,
+        )
+        print(
             "Setup guide: https://github.com/rushikeshmore/shopify-partner-agent#install",
             file=sys.stderr,
         )

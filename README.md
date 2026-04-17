@@ -79,6 +79,10 @@ Ask Claude things like:
 
 ## Install
 
+**Before you start, you need:**
+- A [Shopify Partner account](https://partners.shopify.com).
+- An MCP client installed: [Claude Desktop](https://claude.ai/download), [Claude Code](https://claude.ai/download), [Cursor](https://www.cursor.com), or [Windsurf](https://codeium.com/windsurf). Claude Desktop is free and takes two minutes to install if you don't have one yet.
+
 ### 1. Get your Partner API credentials
 
 You need three values. Log in to the [Partners Dashboard](https://partners.shopify.com) first, then collect each one below.
@@ -110,23 +114,27 @@ One entry per app you want to query, comma-separated.
 
 ### 2. Add the server to your MCP client
 
-`uvx` installs and runs the package from PyPI on first launch. No cloning, no virtualenv.
+Your MCP client will install and run the server automatically the first time it launches. You don't need to download, clone, or set up anything yourself.
 
 <details>
-<summary>Where does the code live? (no clone, no manual download)</summary>
+<summary>What actually gets installed?</summary>
 
-When your MCP client starts the server, `uvx` fetches `shopify-partner-agent` from [PyPI](https://pypi.org/project/shopify-partner-agent/) on the first run and caches it locally. After that, launches are instant from the cache.
+The config you paste below tells your MCP client to run a command called `uvx`. On first launch, `uvx` fetches the server from the Python package registry ([PyPI](https://pypi.org/project/shopify-partner-agent/)) and stores it in a local folder on your computer. After that, startup is instant.
 
-**Cache location:**
+**Where the files sit:**
 - **macOS / Linux:** `~/.cache/uv/`
 - **Windows:** `%LOCALAPPDATA%\uv\cache\`
 
-**Source is auditable** on [PyPI](https://pypi.org/project/shopify-partner-agent/) and [GitHub](https://github.com/rushikeshmore/shopify-partner-agent). The wheel contains runtime code only, no `.env`, tests, or local state.
+The installed package contains only the server code. It does not include your credentials, any test files, or anything else from your machine. The source is public on [PyPI](https://pypi.org/project/shopify-partner-agent/) and [GitHub](https://github.com/rushikeshmore/shopify-partner-agent), so you can audit exactly what runs.
 
-**Remove the cached copy:** `uv cache clean shopify-partner-agent`
-**Update to the latest release:** `uv cache clean shopify-partner-agent`, then relaunch your MCP client (it will fetch the newest version on next start).
+**Remove the installed copy later:**
+```bash
+uv cache clean shopify-partner-agent
+```
 
-Prefer a traditional install with visible source? Use the **pip install** option below (or `git clone` the repo and install with `uv sync`).
+**Update to the latest release:** run the command above, then restart your MCP client. It fetches the newest version on the next launch.
+
+Prefer a traditional install you can see on disk? Use the **pip install** option further down, or `git clone` the repo and run `uv sync`.
 
 </details>
 

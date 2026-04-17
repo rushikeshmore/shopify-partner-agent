@@ -87,14 +87,86 @@ Ask Claude things like:
 4. Copy the access token
 5. Grab your app GIDs: Partners Dashboard > Apps > click app > ID is in the URL
 
-### 2. Add to your MCP client
+### 2. Add the server to your MCP client
 
-No clone, no venv. `uvx` installs and runs in one step.
+`uvx` installs and runs the package from PyPI on first launch. No cloning, no virtualenv.
+
+**Claude Desktop** is the most common path. Paste the block below into `claude_desktop_config.json` and swap in the three values from step 1:
+
+```json
+{
+  "mcpServers": {
+    "shopify-partner-agent": {
+      "command": "uvx",
+      "args": ["shopify-partner-agent"],
+      "env": {
+        "SHOPIFY_ORG_ID": "your_org_id",
+        "SHOPIFY_ACCESS_TOKEN": "your_token",
+        "SHOPIFY_APP_IDS": "gid://partners/App/1234567"
+      }
+    }
+  }
+}
+```
+
+Config file location:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+Using a different client? Open the matching section below.
 
 <details>
-<summary><b>Easiest: let an LLM set it up for you (paste this prompt)</b></summary>
+<summary><b>Claude Code</b></summary>
 
-Open Claude, ChatGPT, Cursor chat, or any LLM, and paste the prompt below. It will ask which client you use and generate the exact config file path and JSON for your setup.
+One command from your terminal:
+
+```bash
+claude mcp add shopify-partner-agent uvx shopify-partner-agent \
+  -e SHOPIFY_ORG_ID=your_org_id \
+  -e SHOPIFY_ACCESS_TOKEN=your_token \
+  -e SHOPIFY_APP_IDS=gid://partners/App/1234567
+```
+
+</details>
+
+<details>
+<summary><b>Cursor / Windsurf</b></summary>
+
+Same JSON as Claude Desktop. Open the MCP settings panel and paste:
+
+```json
+{
+  "mcpServers": {
+    "shopify-partner-agent": {
+      "command": "uvx",
+      "args": ["shopify-partner-agent"],
+      "env": {
+        "SHOPIFY_ORG_ID": "your_org_id",
+        "SHOPIFY_ACCESS_TOKEN": "your_token",
+        "SHOPIFY_APP_IDS": "gid://partners/App/1234567"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>pip install (if you don't use uvx)</b></summary>
+
+```bash
+pip install shopify-partner-agent
+```
+
+Then point your MCP config at the installed `shopify-partner-agent` command instead of `uvx`.
+
+</details>
+
+<details>
+<summary><b>Prefer an AI to set it up for you? Paste this prompt</b></summary>
+
+Open any LLM chat and paste the prompt below. It asks which client you use and generates the exact config file path and JSON for you.
 
 ```
 I want to install the shopify-partner-agent MCP server. It is a Python package on PyPI that connects AI assistants to the Shopify Partner API for revenue, churn, cohort, and merchant analytics.
@@ -117,70 +189,11 @@ Package:   https://pypi.org/project/shopify-partner-agent/
 
 </details>
 
-<details open>
-<summary><b>Claude Desktop</b></summary>
+### 3. Restart your MCP client and verify
 
-Add to `claude_desktop_config.json`:
+Fully quit and relaunch the client after saving the config. Most clients read config only on startup. When it comes back up, the 25 `shopify-partner-agent` tools should appear in the tools menu. If they don't, see [Troubleshooting](#troubleshooting).
 
-```json
-{
-  "mcpServers": {
-    "shopify-partner-agent": {
-      "command": "uvx",
-      "args": ["shopify-partner-agent"],
-      "env": {
-        "SHOPIFY_ORG_ID": "your_org_id",
-        "SHOPIFY_ACCESS_TOKEN": "your_token",
-        "SHOPIFY_APP_IDS": "gid://partners/App/1234567"
-      }
-    }
-  }
-}
-```
-</details>
-
-<details>
-<summary><b>Claude Code</b></summary>
-
-```bash
-claude mcp add shopify-partner-agent uvx shopify-partner-agent \
-  -e SHOPIFY_ORG_ID=your_org_id \
-  -e SHOPIFY_ACCESS_TOKEN=your_token \
-  -e SHOPIFY_APP_IDS=gid://partners/App/1234567
-```
-</details>
-
-<details>
-<summary><b>Cursor / Windsurf</b></summary>
-
-```json
-{
-  "mcpServers": {
-    "shopify-partner-agent": {
-      "command": "uvx",
-      "args": ["shopify-partner-agent"],
-      "env": {
-        "SHOPIFY_ORG_ID": "your_org_id",
-        "SHOPIFY_ACCESS_TOKEN": "your_token",
-        "SHOPIFY_APP_IDS": "gid://partners/App/1234567"
-      }
-    }
-  }
-}
-```
-</details>
-
-<details>
-<summary><b>pip install (alternative)</b></summary>
-
-```bash
-pip install shopify-partner-agent
-```
-
-Then point your MCP config at the installed command, or run `shopify-partner-agent` directly.
-</details>
-
-### 3. Start using it
+### 4. Start using it
 
 ```
 > Show me my Shopify apps

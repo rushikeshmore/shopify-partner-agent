@@ -8,15 +8,15 @@
 
 Free, open-source MCP server that connects Claude to the Shopify Partner API. 25 tools for revenue analytics, churn analysis, retention cohorts, merchant health scoring, conversion funnels, revenue forecasting, and growth velocity.
 
-Query your app business in natural language -- no dashboards, no monthly fees.
+Query your app business in natural language. No dashboards, no monthly fees.
 
 ## Why This Exists
 
-Shopify's own [AI Toolkit](https://github.com/Shopify/Shopify-AI-Toolkit) and official MCP servers ([Dev MCP](https://www.npmjs.com/package/@shopify/dev-mcp), Storefront MCP, Customer Account MCP, Checkout MCP) all target the **Admin API** and **Storefront API** -- store operations and shopping experiences. Every third-party Shopify MCP server on GitHub does the same.
+Shopify's own [AI Toolkit](https://github.com/Shopify/Shopify-AI-Toolkit) and official MCP servers ([Dev MCP](https://www.npmjs.com/package/@shopify/dev-mcp), Storefront MCP, Customer Account MCP, Checkout MCP) all target the **Admin API** and **Storefront API**, which cover store operations and shopping experiences. Every third-party Shopify MCP server on GitHub does the same.
 
 **None of them connect to the Partner API.** If you build Shopify apps, your revenue metrics, churn data, and merchant analytics are locked behind the Partner Dashboard with no MCP-compatible way to query them.
 
-Shopify Partner Agent is the only MCP server that gives AI tools access to Partner API analytics -- MRR, churn, retention cohorts, merchant health, and 20 more computed metrics that even the raw API doesn't provide.
+Shopify Partner Agent is the only MCP server that gives AI tools access to Partner API analytics: MRR, churn, retention cohorts, merchant health, and 20 more computed metrics that even the raw API doesn't provide.
 
 Ask Claude things like:
 - "What's my MRR and how has it changed this quarter?"
@@ -89,7 +89,33 @@ Ask Claude things like:
 
 ### 2. Add to your MCP client
 
-No clone, no venv -- `uvx` installs and runs in one step.
+No clone, no venv. `uvx` installs and runs in one step.
+
+<details>
+<summary><b>Easiest: let an LLM set it up for you (paste this prompt)</b></summary>
+
+Open Claude, ChatGPT, Cursor chat, or any LLM, and paste the prompt below. It will ask which client you use and generate the exact config file path and JSON for your setup.
+
+```
+I want to install the shopify-partner-agent MCP server. It is a Python package on PyPI that connects AI assistants to the Shopify Partner API for revenue, churn, cohort, and merchant analytics.
+
+Walk me through setup step by step:
+
+1. Ask which MCP client I use: Claude Desktop, Claude Code, Cursor, or Windsurf.
+2. Explain how to create a Shopify Partner API access token: Partners Dashboard > Settings > Partner API clients > Create API client. Required scopes: "Manage apps" and "View financials". The token is shown only once, so I need to copy it.
+3. Explain how to find my app GIDs. The format is gid://partners/App/1234567 and the numeric ID is visible in the Partners Dashboard URL when I open an app.
+4. Generate the MCP config for the client I picked. Use the command "uvx" with args ["shopify-partner-agent"] and these placeholder env vars: SHOPIFY_ORG_ID=<my_org_id>, SHOPIFY_ACCESS_TOKEN=<my_token>, SHOPIFY_APP_IDS=<comma_separated_app_gids>.
+5. Tell me the exact config file path for my client on macOS and Windows, and where in that file the mcpServers section goes.
+6. Tell me to replace the placeholders on my own machine. Do NOT ask me to paste my real token into this chat.
+7. Tell me to fully quit and relaunch the MCP client, then confirm the 25 shopify-partner-agent tools appear.
+
+Reference: https://github.com/rushikeshmore/shopify-partner-agent
+Package:   https://pypi.org/project/shopify-partner-agent/
+```
+
+> **Keep your access token out of chat.** Generate the config with placeholders, then fill in the real token locally.
+
+</details>
 
 <details open>
 <summary><b>Claude Desktop</b></summary>
@@ -164,7 +190,8 @@ Then point your MCP config at the installed command, or run `shopify-partner-age
 > Score my merchants by churn risk
 ```
 
-## Troubleshooting
+<details>
+<summary><b>Troubleshooting</b></summary>
 
 **`missing required env vars: SHOPIFY_ORG_ID, ...`**
 Credentials aren't reaching the server. Double-check the `env` block in your MCP client config above, then fully restart the client.
@@ -175,11 +202,13 @@ The access token is wrong or missing scopes. Recreate it in Partners Dashboard w
 **App ID format errors**
 App IDs must be GIDs: `gid://partners/App/1234567`. Bare numeric IDs won't work. Copy the correct format from the Partners Dashboard URL when you open the app.
 
-**Tools don't show up in Claude Desktop / Cursor / Windsurf**
+**Tools don't show up in Claude Desktop, Cursor, or Windsurf**
 Fully quit and relaunch the MCP client after editing config. Most clients only read config at startup.
 
 **`uvx` is stuck on an old version after a release**
 Clear the cache and retry: `uv cache clean shopify-partner-agent`.
+
+</details>
 
 ## Analytics Formulas
 
@@ -216,4 +245,4 @@ All formulas match industry-standard SaaS metrics:
 
 ## License
 
-MIT -- see [LICENSE](LICENSE)
+MIT. See [LICENSE](LICENSE).

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -72,7 +73,7 @@ async def lifespan(app: FastMCP) -> AsyncIterator[AppContext]:
         await sp.close()
 
 
-mcp = FastMCP("Shopify Partner", lifespan=lifespan)
+mcp = FastMCP("shopify-partner-agent", lifespan=lifespan)
 
 
 def _event_in_period(event: dict, start: date, end: date) -> bool:
@@ -1280,8 +1281,23 @@ async def get_credits_adjustments(
         return _error(str(e))
 
 
+_REQUIRED_ENV = ("SHOPIFY_ORG_ID", "SHOPIFY_ACCESS_TOKEN", "SHOPIFY_APP_IDS")
+
+
 def main() -> None:
     """Entry point for the `shopify-partner-agent` console script."""
+    missing = [v for v in _REQUIRED_ENV if not os.environ.get(v)]
+    if missing:
+        print(
+            f"shopify-partner-agent: missing required env vars: {', '.join(missing)}",
+            file=sys.stderr,
+        )
+        print(
+            "Set them in your MCP client config (e.g. claude_desktop_config.json) or your shell.\n"
+            "Setup guide: https://github.com/rushikeshmore/shopify-partner-agent#install",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     mcp.run(transport="stdio")
 
 

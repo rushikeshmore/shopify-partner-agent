@@ -1,6 +1,6 @@
 [project]
 name = "shopify-partner-agent"
-version = "0.4.0"
+version = "0.4.1"
 description = "MCP server that gives AI tools Partner API access: MRR, churn, retention cohorts, merchant health, and 20+ computed analytics for Shopify app developers."
 readme = "README.md"
 license = "MIT"

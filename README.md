@@ -79,13 +79,34 @@ Ask Claude things like:
 
 ## Install
 
-### 1. Get Partner API credentials
+### 1. Get your Partner API credentials
 
-1. Go to [Partners Dashboard](https://partners.shopify.com) > Settings > Partner API clients
-2. Click "Create API client"
-3. Grant permissions: **Manage apps** + **View financials**
-4. Copy the access token
-5. Grab your app GIDs: Partners Dashboard > Apps > click app > ID is in the URL
+You need three values. Log in to the [Partners Dashboard](https://partners.shopify.com) first, then collect each one below.
+
+**`SHOPIFY_ORG_ID`**
+
+The number in your Dashboard URL. Once you are logged in, look at the address bar:
+
+```
+https://partners.shopify.com/1234567/...
+                             ^^^^^^^  this is your org ID
+```
+
+**`SHOPIFY_ACCESS_TOKEN`**
+
+1. Open **Settings > Partner API clients** in the Dashboard.
+2. Click **Create API client**.
+3. Grant permissions: **Manage apps** and **View financials**.
+4. Copy the token. It is shown only once, so save it somewhere safe.
+
+**`SHOPIFY_APP_IDS`**
+
+One entry per app you want to query, comma-separated.
+
+1. Open **Apps** in the Dashboard and click an app.
+2. The URL ends with a numeric ID, for example `/apps/9876543`.
+3. Format it as a GID: `gid://partners/App/9876543`. Bare numeric IDs also work.
+4. Multiple apps? Join them with commas: `gid://partners/App/1,gid://partners/App/2`.
 
 ### 2. Add the server to your MCP client
 
@@ -113,6 +134,8 @@ Config file location:
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
+If the file does not exist yet, create it with the block above exactly as shown. If it already contains other MCP servers, add `shopify-partner-agent` inside the existing `mcpServers` object.
+
 Using a different client? Open the matching section below.
 
 <details>
@@ -132,7 +155,10 @@ claude mcp add shopify-partner-agent uvx shopify-partner-agent \
 <details>
 <summary><b>Cursor / Windsurf</b></summary>
 
-Same JSON as Claude Desktop. Open the MCP settings panel and paste:
+Same JSON as Claude Desktop. Open the MCP settings panel and paste the block below.
+
+- **Cursor:** Settings > **MCP** > **Add new global MCP server**, or edit `~/.cursor/mcp.json` directly.
+- **Windsurf:** Settings > **Cascade** > **MCP servers**.
 
 ```json
 {
@@ -159,7 +185,22 @@ Same JSON as Claude Desktop. Open the MCP settings panel and paste:
 pip install shopify-partner-agent
 ```
 
-Then point your MCP config at the installed `shopify-partner-agent` command instead of `uvx`.
+Then update your MCP config to call the installed command directly instead of `uvx`:
+
+```json
+{
+  "mcpServers": {
+    "shopify-partner-agent": {
+      "command": "shopify-partner-agent",
+      "env": {
+        "SHOPIFY_ORG_ID": "your_org_id",
+        "SHOPIFY_ACCESS_TOKEN": "your_token",
+        "SHOPIFY_APP_IDS": "gid://partners/App/1234567"
+      }
+    }
+  }
+}
+```
 
 </details>
 
@@ -191,7 +232,7 @@ Package:   https://pypi.org/project/shopify-partner-agent/
 
 ### 3. Restart your MCP client and verify
 
-Fully quit and relaunch the client after saving the config. Most clients read config only on startup. When it comes back up, the 25 `shopify-partner-agent` tools should appear in the tools menu. If they don't, see [Troubleshooting](#troubleshooting).
+Save the config, then **fully quit and relaunch** your MCP client. Most clients only read config at startup, so a window reload will not pick it up. After the client restarts, look for `shopify-partner-agent` in the tools or MCP menu. It should appear as connected with 25 tools. If something is off, see [Troubleshooting](#troubleshooting).
 
 ### 4. Start using it
 

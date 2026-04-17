@@ -112,6 +112,24 @@ One entry per app you want to query, comma-separated.
 
 `uvx` installs and runs the package from PyPI on first launch. No cloning, no virtualenv.
 
+<details>
+<summary>Where does the code live? (no clone, no manual download)</summary>
+
+When your MCP client starts the server, `uvx` fetches `shopify-partner-agent` from [PyPI](https://pypi.org/project/shopify-partner-agent/) on the first run and caches it locally. After that, launches are instant from the cache.
+
+**Cache location:**
+- **macOS / Linux:** `~/.cache/uv/`
+- **Windows:** `%LOCALAPPDATA%\uv\cache\`
+
+**Source is auditable** on [PyPI](https://pypi.org/project/shopify-partner-agent/) and [GitHub](https://github.com/rushikeshmore/shopify-partner-agent). The wheel contains runtime code only, no `.env`, tests, or local state.
+
+**Remove the cached copy:** `uv cache clean shopify-partner-agent`
+**Update to the latest release:** `uv cache clean shopify-partner-agent`, then relaunch your MCP client (it will fetch the newest version on next start).
+
+Prefer a traditional install with visible source? Use the **pip install** option below (or `git clone` the repo and install with `uv sync`).
+
+</details>
+
 **Claude Desktop** is the most common path. Paste the block below into `claude_desktop_config.json` and swap in the three values from step 1:
 
 ```json

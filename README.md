@@ -164,6 +164,23 @@ Then point your MCP config at the installed command, or run `shopify-partner-age
 > Score my merchants by churn risk
 ```
 
+## Troubleshooting
+
+**`missing required env vars: SHOPIFY_ORG_ID, ...`**
+Credentials aren't reaching the server. Double-check the `env` block in your MCP client config above, then fully restart the client.
+
+**`401 Unauthorized` or token errors**
+The access token is wrong or missing scopes. Recreate it in Partners Dashboard with **Manage apps** + **View financials** and update your config.
+
+**App ID format errors**
+App IDs must be GIDs: `gid://partners/App/1234567`. Bare numeric IDs won't work. Copy the correct format from the Partners Dashboard URL when you open the app.
+
+**Tools don't show up in Claude Desktop / Cursor / Windsurf**
+Fully quit and relaunch the MCP client after editing config. Most clients only read config at startup.
+
+**`uvx` is stuck on an old version after a release**
+Clear the cache and retry: `uv cache clean shopify-partner-agent`.
+
 ## Analytics Formulas
 
 All formulas match industry-standard SaaS metrics:
@@ -188,6 +205,14 @@ All formulas match industry-standard SaaS metrics:
 - Python 3.11+
 - Shopify Partner account with API access
 - Any MCP-compatible client (Claude Code, Claude Desktop, Cursor, Windsurf)
+
+## Data Privacy
+
+- **Direct API access.** All Partner API calls go from your machine to Shopify. No proxy, no intermediate server, no cloud component operated by this project.
+- **No telemetry.** This server does not send usage, analytics, or error data anywhere. If you block every network except `partners.shopify.com`, it still works.
+- **Credentials stay local.** Your access token lives in your MCP client config (or `.env` if running from source). It never leaves your machine except to authenticate with Shopify.
+- **Query results flow to your LLM.** Tool responses return to your MCP client and are passed to whichever LLM provider you've configured (Anthropic, OpenAI, etc.), so the data you query becomes visible to that provider under their terms. This is inherent to how MCP works, not specific to this server.
+- **Open source, MIT-licensed.** Auditable at [`src/shopify_partner_agent/`](src/shopify_partner_agent/).
 
 ## License
 
